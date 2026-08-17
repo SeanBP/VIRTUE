@@ -19,7 +19,6 @@ public class PauseMenu : MonoBehaviour
 
     public GameObject credits;
     public GameObject controls;
-    public GameObject AudioSource;
     public GameObject menuText;
 
     // Opening the manual currently breaks on macOS Steam builds; deactivate it
@@ -49,14 +48,11 @@ public class PauseMenu : MonoBehaviour
     private bool isMuted = false;
     private float previousVolume = 0.05f;
 
-    public void ChangeVolume(float volume)
-    {
-        AudioSource.GetComponent<AudioSource>().volume = volume;
-    }
+
 
     void Start()
     {
-        AudioSource.GetComponent<AudioSource>().volume = previousVolume;
+
         HUDs = GameObject.FindGameObjectsWithTag("HUD");
 
         InitializeMenuPositions();
@@ -171,23 +167,6 @@ public class PauseMenu : MonoBehaviour
         }
         
         if (Input.GetKeyDown(KeyCode.F)) ToggleFullscreen();
-        if (Input.GetKeyDown(KeyCode.V)) ToggleMute(); // Mute/unmute feature
-    }
-
-    public void ToggleMute()
-    {
-        AudioSource audio = AudioSource.GetComponent<AudioSource>();
-        if (isMuted)
-        {
-            audio.volume = previousVolume;
-            isMuted = false;
-        }
-        else
-        {
-            previousVolume = audio.volume;
-            audio.volume = 0f;
-            isMuted = true;
-        }
     }
 
     public void StartTour()

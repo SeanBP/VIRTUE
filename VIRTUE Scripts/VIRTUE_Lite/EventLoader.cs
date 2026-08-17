@@ -1000,7 +1000,7 @@ public class EventLoader : MonoBehaviour
                     // Apply display scale only at rendering
                     lineRenderer.SetPosition(0, startPosition * scale);
                     lineRenderer.SetPosition(1, endPosition * scale);
-
+                    
                     lineRenderer.startWidth = 0.04f;
                     lineRenderer.endWidth = 0.04f;
                     lineRenderer.material = new Material(Shader.Find("Sprites/Default"));

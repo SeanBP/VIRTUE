@@ -7,16 +7,15 @@ using UnityEngine.UI;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using TMPro;
-using static System.Net.Mime.MediaTypeNames;
-using static ComponentMaker;
-using System.Linq;
 using TriLibCore;
 using TriLibCore.General;
 using TriLibCore.Mappers;
 using TriLibCore.Utils;
-using UnityEngine.Networking;
-using NativeFilePickerNamespace;
-using UnityEngine.Android;
+using System.Linq;
+using static System.Net.Mime.MediaTypeNames;
+using static ComponentMaker;
+//using System.Runtime.Remoting.Contexts;
+
 #pragma warning disable 0618
 
 public class ComponentMaker : MonoBehaviour
@@ -43,7 +42,6 @@ public class ComponentMaker : MonoBehaviour
         // takes precedence and the two headers can't loop off each other.
         public string event_file = "";
     }
-
 
     [System.Serializable]
     public class Components
@@ -72,12 +70,12 @@ public class ComponentMaker : MonoBehaviour
     private bool menagerieActive = false;
     public UnityEngine.UI.Text errorText;
 
-    private string filename = "EIC_ePIC";
-    private string lastFilename = "EIC_ePIC";
+    private string filename = "EIC_ePIC.json";
+    private string lastFilename = "EIC_ePIC.json";
     private StreamReader source;
     private string fileContents;
     private List<GameObject> nameTagObjects = new List<GameObject>();  // Stores references to name tags
-    private List<GameObject> detectorParts = new List<GameObject>();
+    public List<GameObject> detectorParts = new List<GameObject>();
     private List<GameObject> lineObjects = new List<GameObject>();
     private List<GameObject> pivots = new List<GameObject>();
     private bool tagsActive = false;
@@ -101,10 +99,9 @@ public class ComponentMaker : MonoBehaviour
     public UnityEngine.UI.Text nameText;
     public bool loadingModel = false;
     public GameObject figures;
-    public UnityEngine.UI.Text figureText;
-    List<int> jsonFileIndexes = new List<int>();
-    List<int> objectIndexes = new List<int>();
     public GameObject models;
+    public UnityEngine.UI.Text figureText;
+    List<int> objectIndexes = new List<int>();
     private List<float> detectorPartAlphas = new List<float>();
     private string modelTextCache = "";
     private GameObject activeModel;
@@ -113,9 +110,10 @@ public class ComponentMaker : MonoBehaviour
     // the two scripts are otherwise independent.
     private EventLoader eventLoader;
 
+
     private List<string> acceptedExtensions = new List<string>
     {
-        ".json"
+        ".json", ".fbx"
     };
 
     // Start is called before the first frame update
@@ -123,13 +121,9 @@ public class ComponentMaker : MonoBehaviour
     {
         eventLoader = FindAnyObjectByType<EventLoader>();
 
-        if (!Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead))
-        {
-            Permission.RequestUserPermission(Permission.ExternalStorageRead);
-        }
         figures.SetActive(false);
         LoadFilesIntoDropdown();
-        int initialIndex = fileNames.IndexOf("EIC_ePIC");
+        int initialIndex = fileNames.IndexOf("EIC_ePIC.json");
         if (initialIndex != -1)
         {
             fileDropdown.value = initialIndex;
@@ -139,7 +133,7 @@ public class ComponentMaker : MonoBehaviour
         {
             filename = fileNames[0];
         }
-        BuildSimModel();
+        buildSimModel();
     }
 
     public void LoadTourFile(string newFilename)
@@ -153,16 +147,6 @@ public class ComponentMaker : MonoBehaviour
         // model/event pairing explicitly (per-scene), so don't chase this
         // model's header.event_file.
         filename = newFilename;
-
-        int index = fileNames.FindIndex(f =>
-        string.Equals(f, Path.GetFileNameWithoutExtension(newFilename),
-        StringComparison.OrdinalIgnoreCase));
-
-        if (index >= 0)
-        {
-            fileDropdown.value = index;
-        }
-
         LoadFile(chaseCompanion: false);  // This should set loadingModel = true internally
 
         // Wait until loading is done
@@ -207,6 +191,7 @@ public class ComponentMaker : MonoBehaviour
             ToggleFigures();
     }
 
+
     public void ActivateComponents(ModelSettings modelSettings)
     {
         StartCoroutine(ActivateComponentsCoroutine(modelSettings));
@@ -224,8 +209,6 @@ public class ComponentMaker : MonoBehaviour
         HashSet<int> lineActiveSet = new HashSet<int>();
         if (modelSettings.lines_active != null && modelSettings.lines_active.Count > 0)
             lineActiveSet = new HashSet<int>(modelSettings.lines_active);
-
-        detectorText.text = "";
 
         // Create selection set
         HashSet<int> selected = null;
@@ -271,7 +254,6 @@ public class ComponentMaker : MonoBehaviour
                 if (renderer != null)
                 {
                     float start = startAlphas[i];
-
                     float target = isSelected ? detectorPartAlphas[i] : 0f;
 
                     Color c = renderer.material.color;
@@ -338,87 +320,22 @@ public class ComponentMaker : MonoBehaviour
         }
     }
 
-    public void UploadNewModel()
+    public void ToggleFigures()
     {
-        errorText.text = "";
-        // Open file picker to select an FBX or JSON file
-        NativeFilePicker.PickFile((string path) =>
+        if (figures.activeSelf)
         {
-            if (path != null)
-            {
-                string extension = Path.GetExtension(path).ToLower();
-                if (extension == ".json")
-                {
-                    // Handle JSON file
-                    StartCoroutine(LoadJsonFileFromPath(path));
-                    
-                }
-                else if (extension == ".fbx")
-                {
-                    // Handle FBX file
-                    StartCoroutine(LoadFBXFileFromPath(path));
-                }
-                else
-                {
-                    errorText.text = "Not a .json or .fbx file";
-                }
-            }
-            else
-            {
-                UnityEngine.Debug.Log("No file picked.");
-            }
-        });  // Allow both json and fbx files to be selected
-    }
-
-    private IEnumerator LoadJsonFileFromPath(string path)
-    {
-        if (File.Exists(path))
-        {
-            // Read the file contents directly
-            string fileContents = File.ReadAllText(path);
-            TextAsset jsonFile = new TextAsset(fileContents);
-
-            // Now load the JSON data
-            ResetModelState();
-            LoadJsonFile(jsonFile); // Your method to handle the loaded JSON file
+            figures.SetActive(false);
+            figureText.text = "Show Figures";
         }
         else
         {
-            UnityEngine.Debug.LogError("Error loading file: File not found");
-            errorText.text = "Error loading file: File not found " + path;
+            figures.SetActive(true);
+            figureText.text = "Hide Figures";
         }
-
-        // Ensure coroutine exits properly
-        yield break;
-    }
-
-    private IEnumerator LoadFBXFileFromPath(string path)
-    {
-        if (File.Exists(path))
-        {
-            // Read the file bytes directly from the local path
-            byte[] fileData = File.ReadAllBytes(path);
-
-            // Optionally, write the file to a temporary location
-            string tempPath = Path.Combine(UnityEngine.Application.persistentDataPath, Path.GetFileName(path));
-            File.WriteAllBytes(tempPath, fileData);
-
-            // Call the function to load the FBX model using TriLib
-            LoadFBXModel(tempPath);
-        }
-        else
-        {
-            UnityEngine.Debug.LogError("File not found: " + path);
-            errorText.text = "Error loading file: File not found";
-        }
-
-        // Ensure the coroutine completes correctly
-        yield break;
     }
 
     private void LoadFBXModel(string filepath)
     {
-        ResetModelState();
         var assetLoaderOptions = AssetLoader.CreateDefaultLoaderOptions();
         assetLoaderOptions.UseUnityNativeNormalCalculator = true;
         assetLoaderOptions.AlphaMaterialMode = AlphaMaterialMode.Transparent;
@@ -426,12 +343,10 @@ public class ComponentMaker : MonoBehaviour
         AssetLoader.LoadModelFromFile(filepath, OnLoad, OnMaterialsLoad, OnProgress, OnError, null, assetLoaderOptions);
     }
 
-
     private void OnBeginLoad(bool anyModelSelected)
     {
         loadingModel = true;
     }
-
 
     private void OnProgress(AssetLoaderContext assetLoaderContext, float progress)
     {
@@ -452,8 +367,6 @@ public class ComponentMaker : MonoBehaviour
             }
         }
     }
-
-
     private void OnError(IContextualizedError contextualizedError)
     {
         errorText.text = $"Error: {contextualizedError.ToString()}";
@@ -487,6 +400,16 @@ public class ComponentMaker : MonoBehaviour
             SetLayerRecursively(child.gameObject, newLayer); // Recursively set layer for children
         }
     }
+
+    private void TagNthLevelChildren(GameObject parent, string tag, int level)
+    {
+        try
+        {
+            TagChildrenAtLevel(parent.transform, tag, level, 0);
+        }
+        catch { }
+    }
+
     private void TagChildrenAtLevel(Transform parent, string tag, int targetLevel, int currentLevel)
     {
         if (currentLevel == targetLevel)
@@ -510,28 +433,7 @@ public class ComponentMaker : MonoBehaviour
             }
         }
     }
-    private void TagNthLevelChildren(GameObject parent, string tag, int level)
-    {
-        try
-        {
-            TagChildrenAtLevel(parent.transform, tag, level, 0);
-        }
-        catch { }
-    }
 
-    public void ToggleFigures()
-    {
-        if (figures.activeSelf)
-        {
-            figures.SetActive(false);
-            figureText.text = "Show Figures";
-        }
-        else
-        {
-            figures.SetActive(true);
-            figureText.text = "Hide Figures";
-        }
-    }
     public void ToggleMenagerie()
     {
         if (activeModel == null)
@@ -567,7 +469,7 @@ public class ComponentMaker : MonoBehaviour
             explodeSlider.value = 1f;
             lastSliderValue = 1f;
             lastFilename = filename;
-            BuildSimModel(chaseCompanion);
+            buildSimModel(chaseCompanion);
 
         }
     }
@@ -581,21 +483,12 @@ public class ComponentMaker : MonoBehaviour
     public void LoadModelFile(string newFilename)
     {
         filename = newFilename;
-
-        int index = fileNames.FindIndex(f =>
-        string.Equals(f, Path.GetFileNameWithoutExtension(newFilename),
-        StringComparison.OrdinalIgnoreCase));
-
-        if (index >= 0)
-        {
-            fileDropdown.value = index;
-        }
-
         LoadFile(chaseCompanion: false);
     }
 
     public void ResetModelState()
     {
+        activeModel = null;
         loadingModel = true;
         wireText.text = "Show Wireframe";
         wireOn = false;
@@ -654,167 +547,207 @@ public class ComponentMaker : MonoBehaviour
         tagsActive = false;
     }
 
-    public void BuildSimModel(bool chaseCompanion = true)
+    public void buildSimModel(bool chaseCompanion = true)
     {
-        ResetModelState();  // Call the new method to reset everything
+        ResetModelState();
 
         int selectedIndex = fileDropdown.value;
 
-        // Check if the selected index matches a JSON file or a 3D model
-        if (jsonFileIndexes.Contains(selectedIndex))
-        {
-            // Load JSON file
-            TextAsset[] files = Resources.LoadAll<TextAsset>("Models");
-            string filename = displayNames[selectedIndex];
+        string path = Path.Combine(UnityEngine.Application.streamingAssetsPath, "Models");
+        string filePath = Path.Combine(path, filename);
 
-            TextAsset jsonFile = files.FirstOrDefault(f => f.name == filename);
-            if (jsonFile != null)
-            {
-                LoadJsonFile(jsonFile, chaseCompanion);
-            }
-        }
-        else if (objectIndexes.Contains(selectedIndex))
-        {
-            GameObject modelsParent = GameObject.Find("Models");
-            if (modelsParent != null)
-            {
-                Transform selectedObject = modelsParent.transform.GetChild(objectIndexes.IndexOf(selectedIndex));
-                if (selectedObject != null)
-                {
-                    selectedObject.gameObject.SetActive(true);
-                    activeModel = selectedObject.gameObject;
-                    detectorText.text = selectedObject.name;
-                    try
-                    {
-                        TagChildrenAtLevel(selectedObject.transform, "Detector", 1, 0);
-                    }
-                    catch { }
-                }
-            }
-        }
-
-        loadingModel = false;
-    }
-
-    void LoadJsonFile(TextAsset jsonFile, bool chaseCompanion = true)
-    {
         try
         {
-            fileContents = jsonFile.text;
+            string fileExtension = Path.GetExtension(filePath).ToLower();
 
-            // Parse JSON file to EventDataWrapper class
-            ComponentListWrapper componentListWrapper = JsonUtility.FromJson<ComponentListWrapper>(fileContents);
-
-            string version = componentListWrapper.header.version;
-
-            if (string.Equals(version, targetVersion) || compatibleVersions.Contains(version))
+            // ================= JSON MODEL =================
+            if (fileExtension == ".json")
             {
-                string unit = componentListWrapper.header.length_unit;
-                detectorText.text = componentListWrapper.header.detector;
+                StreamReader source = new StreamReader(filePath);
+                fileContents = source.ReadToEnd();
+                source.Close();
 
-                if (string.Equals(unit, "m"))
-                {
-                    scale = 1.0f;
-                }
-                else if (string.Equals(unit, "cm"))
-                {
-                    scale = 0.01f;
-                }
-                else if (string.Equals(unit, "mm"))
-                {
-                    scale = 0.001f;
-                }
-                scale = scale * componentListWrapper.header.scale;
+                ComponentListWrapper componentListWrapper =
+                    JsonUtility.FromJson<ComponentListWrapper>(fileContents);
 
-                if (chaseCompanion && !string.IsNullOrEmpty(componentListWrapper.header.event_file) && eventLoader != null)
-                {
-                    eventLoader.LoadEventFile(componentListWrapper.header.event_file);
-                }
+                string version = componentListWrapper.header.version;
 
-                int detCount = 0;
-                var sortedComponents = componentListWrapper.components
+                if (String.Equals(version, targetVersion) || compatibleVersions.Contains(version))
+                {
+                    detectorText.text = componentListWrapper.header.detector;
+
+                    switch (componentListWrapper.header.length_unit)
+                    {
+                        case "m":
+                            scale = 1.0f;
+                            break;
+                        case "cm":
+                            scale = 0.01f;
+                            break;
+                        case "mm":
+                            scale = 0.001f;
+                            break;
+                    }
+
+                    scale *= componentListWrapper.header.scale;
+
+                    if (chaseCompanion && !string.IsNullOrEmpty(componentListWrapper.header.event_file) && eventLoader != null)
+                    {
+                        eventLoader.LoadEventFile(componentListWrapper.header.event_file);
+                    }
+
+                    int detCount = 0;
+
+                    var sortedComponents = componentListWrapper.components
                         .OrderBy(c => c.index == -1 ? int.MaxValue : c.index)
                         .ToList();
-                foreach (var data in sortedComponents)
-                {
-                    string name = data.name;
-                    int index = data.index;
-                    
-                    if (index == -1)
+
+                    foreach (var data in sortedComponents)
                     {
-                        index = detCount;
-                    }
-                    float[] position = data.position;
-                    float[] eulerAngle = data.euler_angles_deg;
-                    float[] rgba = data.color_rgba;
-                    string typeLower = data.type.ToLowerInvariant();
+                        string name = data.name;
+                        int index = (data.index == -1) ? detCount : data.index;
 
-                    if (typeLower.Contains("t"))
+                        float[] position = data.position;
+                        float[] eulerAngle = data.euler_angles_deg;
+                        float[] rgba = data.color_rgba;
+
+                        string typeLower = data.type.ToLowerInvariant();
+
+                        if (typeLower.Contains("t"))
+                        {
+                            int sides = data.sides;
+
+                            float[] rLeft = data.radii.left;
+                            float[] rRight = data.radii.right;
+
+                            if (rLeft[0] == -1)
+                                rLeft = rRight;
+                            else if (rRight[0] == -1)
+                                rRight = rLeft;
+
+                            float[] length = data.length;
+
+                            if (length[0] == -1)
+                                length[0] = length[1];
+                            else if (length[1] == -1)
+                                length[1] = length[0];
+
+                            MakeToroid(
+                                name,
+                                sides,
+                                position,
+                                rLeft,
+                                rRight,
+                                length,
+                                data.inner_offset,
+                                eulerAngle,
+                                rgba,
+                                componentListWrapper.components.Length - index);
+
+                            detCount++;
+                        }
+                        else if (typeLower.Contains("b"))
+                        {
+                            MakeBlock(
+                                name,
+                                position,
+                                data.size,
+                                eulerAngle,
+                                rgba,
+                                componentListWrapper.components.Length - index,
+                                true);
+
+                            detCount++;
+                        }
+                        else if (typeLower.Contains("s"))
+                        {
+                            MakeSpheroid(
+                                name,
+                                position,
+                                data.size,
+                                eulerAngle,
+                                rgba,
+                                componentListWrapper.components.Length - index);
+
+                            detCount++;
+                        }
+                    }
+
+                    // Store original alpha values for tour mode
+                    detectorPartAlphas.Clear();
+
+                    foreach (GameObject go in detectorParts)
                     {
-                        int sides = data.sides;
+                        Renderer renderer = go.GetComponent<Renderer>();
 
-                        float[] rLeft = data.radii.left;
-                        float[] rRight = data.radii.right;
-                        float[] length = data.length;
-
-                        if (rLeft[0] == -1) rLeft = rRight;
-                        else if (rRight[0] == -1) rRight = rLeft;
-
-                        if (length[0] == -1) length[0] = length[1];
-                        else if (length[1] == -1) length[1] = length[0];
-
-                        float offsetIn = data.inner_offset;
-                        
-                        MakeToroid(name, sides, position, rLeft, rRight, length, offsetIn, eulerAngle, rgba, componentListWrapper.components.Length - index);
-                        detCount++;
+                        if (renderer != null)
+                            detectorPartAlphas.Add(renderer.material.color.a);
+                        else
+                            detectorPartAlphas.Add(0f);
                     }
-                    else if (typeLower.Contains("b"))
+
+                    // Create a parent object for hiding/showing the entire model.
+                    // IMPORTANT: detectorParts is left unchanged so tour mode still
+                    // has access to every individual detector component.
+                    GameObject jsonRoot = new GameObject(componentListWrapper.header.detector);
+
+                    foreach (GameObject part in detectorParts)
                     {
-                        float[] size = data.size;
-                        MakeBlock(name, position, size, eulerAngle, rgba, componentListWrapper.components.Length - index, true);
-                        detCount++;
+                        part.transform.SetParent(jsonRoot.transform, true);
                     }
-                    else if (typeLower.Contains("s"))
-                    {
-                        float[] size = data.size;
-                        MakeSpheroid(name, position, size, eulerAngle, rgba, componentListWrapper.components.Length - index);
-                        detCount++;
-                    }
+
+                    activeModel = jsonRoot;
                 }
-                detectorPartAlphas.Clear();
-
-                foreach (var go in detectorParts)
+                else
                 {
-                    var renderer = go.GetComponent<Renderer>();
-                    if (renderer != null)
-                    {
-                        detectorPartAlphas.Add(renderer.material.color.a);
-                    }
-                    else
-                    {
-                        detectorPartAlphas.Add(0f);
-                    }
+                    errorText.text = "Model JSON File not version " + targetVersion;
+                    UnityEngine.Debug.LogError(errorText.text);
                 }
-                GameObject root = new GameObject("Loaded JSON Model");
-
-                foreach (GameObject part in detectorParts)
-                {
-                    part.transform.SetParent(root.transform, true);
-                }
-
-                activeModel = root;
             }
+
+            // ================= SCENE MODEL =================
+            else if (objectIndexes.Contains(selectedIndex))
+            {
+                GameObject modelsParent = GameObject.Find("Models");
+
+                if (modelsParent != null)
+                {
+                    Transform selectedObject =
+                        modelsParent.transform.GetChild(objectIndexes.IndexOf(selectedIndex));
+
+                    if (selectedObject != null)
+                    {
+                        selectedObject.gameObject.SetActive(true);
+                        detectorText.text = selectedObject.name;
+
+                        try
+                        {
+                            TagChildrenAtLevel(selectedObject.transform, "Detector", 1, 0);
+                        }
+                        catch { }
+
+                        activeModel = selectedObject.gameObject;
+                    }
+                }
+            }
+
+            // ================= FBX MODEL =================
             else
             {
-                errorText.text = "Model JSON File not version " + targetVersion;
-                UnityEngine.Debug.LogError("Model JSON File not version " + targetVersion);
+                detectorText.text = Path.GetFileNameWithoutExtension(filename);
+                detectorPartAlphas.Clear();
+
+                LoadFBXModel(filePath);
+                // activeModel is assigned in OnLoad()
             }
         }
         catch (Exception ex)
         {
             errorText.text = "Error loading model file: " + ex.Message;
-            UnityEngine.Debug.LogError("Error loading model file: " + ex.Message);
+            UnityEngine.Debug.LogError(errorText.text);
         }
+
+        loadingModel = false;
     }
 
 
@@ -829,19 +762,20 @@ public class ComponentMaker : MonoBehaviour
 
     void LoadFilesIntoDropdown()
     {
-        // Load all JSON files from the Resources/Models folder
-        TextAsset[] files = Resources.LoadAll<TextAsset>("Models");
+        // Path to the "Models" subfolder in StreamingAssets
+        string path = Path.Combine(UnityEngine.Application.streamingAssetsPath, "Models");
 
-        if (files.Length == 0)
+        // Check if the "Models" folder exists
+        if (!Directory.Exists(path))
         {
-            errorText.text = "No files found in Resources/Models.";
+            errorText.text = "Models folder not found in StreamingAssets.";
             return;
         }
 
+        // Clear existing options and populate new ones
         fileDropdown.ClearOptions();
         fileNames.Clear();
         displayNames.Clear();
-        jsonFileIndexes.Clear();
         objectIndexes.Clear();
 
         // Add child object names from "3DModels"
@@ -861,20 +795,29 @@ public class ComponentMaker : MonoBehaviour
             UnityEngine.Debug.LogWarning("Models GameObject not found in the scene.");
         }
 
-        // Add JSON file names
-        foreach (TextAsset file in files)
+        // Retrieve all files in the directory
+        string[] allFiles = Directory.GetFiles(path);
+
+        foreach (string file in allFiles)
         {
-            string fileName = file.name;
-            fileNames.Add(fileName);
-            displayNames.Add(fileName);
-            jsonFileIndexes.Add(displayNames.Count - 1); // Track JSON file index
+            string extension = Path.GetExtension(file).ToLower();
+
+            // Check if the file has an accepted extension
+            if (acceptedExtensions.Contains(extension))
+            {
+                string fileName = Path.GetFileName(file); // Get the file name only
+                string displayName = Path.GetFileNameWithoutExtension(file); // Display name without extension
+
+                fileNames.Add(fileName); // Store for selection handling
+                displayNames.Add(displayName); // Add to dropdown
+            }
         }
 
-        
 
+
+        // Add file names to the dropdown
         fileDropdown.AddOptions(displayNames);
     }
-
 
     public void OnFileSelected(int index)
     {
@@ -1508,5 +1451,50 @@ public class ComponentMaker : MonoBehaviour
 
         }
         lastSliderValue = newValue;
+    }
+
+    // Toggle the colliders on and off
+    public void ToggleColliders()
+    {
+        GameObject[] components = GameObject.FindGameObjectsWithTag("Detector");
+
+        if (collidersOn)
+        {
+            foreach (var obj in components)
+            {
+                Collider collider = obj.GetComponent<Collider>();
+                if (collider != null)
+                {
+                    collider.enabled = false;  // Toggle collider state
+                }
+            }
+            collidersOn = false;
+        }
+        else
+        {
+            foreach (var obj in components)
+            {
+                Collider collider = obj.GetComponent<Collider>();
+                if (collider != null)
+                {
+                    collider.enabled = true;  // Toggle collider state
+                }
+            }
+            collidersOn = true;
+        }
+    }
+
+    public void OffColliders()
+    {
+        GameObject[] components = GameObject.FindGameObjectsWithTag("Detector");
+        foreach (var obj in components)
+        {
+            Collider collider = obj.GetComponent<Collider>();
+            if (collider != null)
+            {
+                collider.enabled = false;  // Toggle collider state
+            }
+        }
+        collidersOn = false;
     }
 }

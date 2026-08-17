@@ -34,6 +34,13 @@ public class ComponentMaker : MonoBehaviour
         public string detector;
         public string length_unit = "m";
         public float scale = 1.0f;
+        // Optional: event file (StreamingAssets/Events) to auto-load alongside
+        // this model file, mirroring EventLoader's header.model_file. Only
+        // followed on a direct/manual model load -- if this model was itself
+        // auto-loaded via an event file's header.model_file, we don't chase
+        // this back, so the event file the user actually selected always
+        // takes precedence and the two headers can't loop off each other.
+        public string event_file = "";
     }
 
     [System.Serializable]
@@ -45,7 +52,7 @@ public class ComponentMaker : MonoBehaviour
         public int sides;
         public float[] position = new float[] { 0f, 0f, 0f };
         public Radii radii;
-        public Length length;
+        public float[] length = new float[] { -1f, -1f };
         public float inner_offset = 0f;
         public float[] euler_angles_deg = new float[] { 0f, 0f, 0f };
 
@@ -58,13 +65,6 @@ public class ComponentMaker : MonoBehaviour
     {
         public float[] left = new float[] { -1f, -1f };  // Array for left side radii [rmin1, rmax1]
         public float[] right = new float[] { -1f, -1f }; // Array for right side radii [rmin2, rmax2]
-    }
-
-    [System.Serializable]
-    public class Length
-    {
-        public float outer = -1f;
-        public float inner = -1f;
     }
 
     private bool menagerieActive = false;
@@ -82,8 +82,11 @@ public class ComponentMaker : MonoBehaviour
     private float scale = 1.0f;
     private float lineThickness = 0.01f;
     public UnityEngine.UI.Text detectorText;
-    private string targetVersion = "3.1.0";
-    private List<string> compatibleVersions = new List<string> { "3.0.0" };
+    private string targetVersion = "3.2.0";
+    // Intentionally empty: 3.2.0 is the only accepted model file version, since
+    // the toroid format change in the Components schema means older-format
+    // model files are no longer guaranteed compatible.
+    private List<string> compatibleVersions = new List<string>();
     private List<string> fileNames = new List<string>();
     private List<string> displayNames = new List<string>();
     public TMP_Dropdown fileDropdown;
@@ -103,6 +106,10 @@ public class ComponentMaker : MonoBehaviour
     private string modelTextCache = "";
     private GameObject activeModel;
 
+    // Found at runtime the same way EventLoader finds componentMaker, since
+    // the two scripts are otherwise independent.
+    private EventLoader eventLoader;
+
 
     private List<string> acceptedExtensions = new List<string>
     {
@@ -112,6 +119,8 @@ public class ComponentMaker : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
+        eventLoader = FindAnyObjectByType<EventLoader>();
+
         figures.SetActive(false);
         LoadFilesIntoDropdown();
         int initialIndex = fileNames.IndexOf("EIC_ePIC.json");
@@ -134,9 +143,11 @@ public class ComponentMaker : MonoBehaviour
 
     private IEnumerator LoadTourFileCoroutine(string newFilename)
     {
-        // Set filename and start loading the model
+        // Set filename and start loading the model. A tour manages its own
+        // model/event pairing explicitly (per-scene), so don't chase this
+        // model's header.event_file.
         filename = newFilename;
-        LoadFile();  // This should set loadingModel = true internally
+        LoadFile(chaseCompanion: false);  // This should set loadingModel = true internally
 
         // Wait until loading is done
         while (loadingModel)
@@ -176,7 +187,7 @@ public class ComponentMaker : MonoBehaviour
         }
 
         // If figures are active, toggle them off
-        if (figures.active)
+        if (figures.activeSelf)
             ToggleFigures();
     }
 
@@ -314,7 +325,7 @@ public class ComponentMaker : MonoBehaviour
 
     public void ToggleFigures()
     {
-        if (figures.active)
+        if (figures.activeSelf)
         {
             figures.SetActive(false);
             figureText.text = "Show Figures";
@@ -442,7 +453,22 @@ public class ComponentMaker : MonoBehaviour
         modelText.text = newState ? "Hide Model" : "Show Model";
     }
 
+    // Kept as a genuine zero-parameter method (not a default-value overload)
+    // because it's wired directly to UI Button.onClick in the scene, and
+    // Unity's persistent-call resolver only binds to an exact-arity match --
+    // a default parameter here would silently break that binding.
     public void LoadFile()
+    {
+        LoadFile(true);
+    }
+
+    // chaseCompanion controls whether a successfully-loaded model's own
+    // header.event_file gets auto-loaded afterward. Direct/manual loads
+    // (via the parameterless LoadFile() above) chase it; companion loads
+    // triggered the other way (LoadModelFile, below) and tour loads don't,
+    // so the two headers can never chase each other in a loop and the file
+    // the user actually selected always wins.
+    private void LoadFile(bool chaseCompanion)
     {
 
         if (!String.Equals(filename, lastFilename) && loadingModel == false)
@@ -450,9 +476,21 @@ public class ComponentMaker : MonoBehaviour
             explodeSlider.value = 1f;
             lastSliderValue = 1f;
             lastFilename = filename;
-            buildSimModel();
+            buildSimModel(chaseCompanion);
 
         }
+    }
+
+    // For external callers (e.g. EventLoader.cs, when an event file's own
+    // header.model_file names a model) that just want a named model built
+    // normally -- unlike LoadTourFile(), this does not hide components
+    // afterward for a tour-style reveal. This model's own header.event_file
+    // (if any) is not chased, since the event file that led here already
+    // takes precedence.
+    public void LoadModelFile(string newFilename)
+    {
+        filename = newFilename;
+        LoadFile(chaseCompanion: false);
     }
 
     public void ResetModelState()
@@ -516,7 +554,7 @@ public class ComponentMaker : MonoBehaviour
         tagsActive = false;
     }
 
-    public void buildSimModel()
+    public void buildSimModel(bool chaseCompanion = true)
     {
         ResetModelState();
 
@@ -560,6 +598,11 @@ public class ComponentMaker : MonoBehaviour
 
                     scale *= componentListWrapper.header.scale;
 
+                    if (chaseCompanion && !string.IsNullOrEmpty(componentListWrapper.header.event_file) && eventLoader != null)
+                    {
+                        eventLoader.LoadEventFile(componentListWrapper.header.event_file);
+                    }
+
                     int detCount = 0;
 
                     var sortedComponents = componentListWrapper.components
@@ -589,9 +632,7 @@ public class ComponentMaker : MonoBehaviour
                             else if (rRight[0] == -1)
                                 rRight = rLeft;
 
-                            float[] length = new float[2];
-                            length[0] = data.length.inner;
-                            length[1] = data.length.outer;
+                            float[] length = data.length;
 
                             if (length[0] == -1)
                                 length[0] = length[1];

@@ -71,6 +71,7 @@ public class TourMaker : MonoBehaviour
     private List<TextAsset> tourFiles = new List<TextAsset>();
     private TourFile currentTour;
     private int currentSceneIndex = 0;
+    private string targetVersion = "3.2.0";
 
     private ComponentMaker componentMaker;
     private EventLoader eventLoader;
@@ -79,8 +80,8 @@ public class TourMaker : MonoBehaviour
 
     void Start()
     {
-        componentMaker = FindObjectOfType<ComponentMaker>();
-        eventLoader = FindObjectOfType<EventLoader>();
+        componentMaker = FindAnyObjectByType<ComponentMaker>();
+        eventLoader = FindAnyObjectByType<EventLoader>();
 
         if (componentMaker == null || eventLoader == null)
         {
@@ -161,6 +162,15 @@ public class TourMaker : MonoBehaviour
             if (errorText != null)
                 errorText.text = "Error reading tour file: " + e.Message;
 
+            yield break;
+        }
+
+        if (!string.Equals(currentTour.header.version, targetVersion))
+        {
+            if (errorText != null)
+                errorText.text = "Tour JSON File not version " + targetVersion;
+
+            Debug.LogError("Tour JSON File not version " + targetVersion);
             yield break;
         }
 

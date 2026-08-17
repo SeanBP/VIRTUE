@@ -45,7 +45,7 @@ public class PauseMenu : MonoBehaviour
 
     public UnityEngine.UI.Text errorText;
 
-    private string pdfFileName = "VIRTUE_User_Guide_V3_0_0.pdf";
+    private string pdfFileName = "VIRTUE_User_Guide_V3_2_0.pdf";
 
     public void ChangeVolume(float volume)
     {
@@ -259,7 +259,7 @@ public class PauseMenu : MonoBehaviour
     public void Credits()
     {
         controls.SetActive(false);
-        if (credits.active)
+        if (credits.activeSelf)
         {
             credits.SetActive(false);
         }
@@ -272,7 +272,7 @@ public class PauseMenu : MonoBehaviour
     public void Controls()
     {
         credits.SetActive(false);
-        if (controls.active)
+        if (controls.activeSelf)
         {
             controls.SetActive(false);
         }

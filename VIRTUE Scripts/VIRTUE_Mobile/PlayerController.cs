@@ -34,10 +34,15 @@ public class PlayerController : MonoBehaviour
     public float targetMoveDuration = 1.0f;
     public bool isMoving = false;
 
+    // The camera position the app starts up in, captured once in Start()
+    // before any user zoom/orbit input can change `distance`.
+    public Vector3 DefaultPosition { get; private set; }
+
     // Start is called before the first frame update
     void Start()
     {
         controller = GetComponent<CharacterController>();
+        DefaultPosition = new Vector3(distance, 0f, 0f);
     }
 
     public void MoveTargetTo(Vector3 worldPosition)
@@ -139,7 +144,7 @@ public class PlayerController : MonoBehaviour
             }
             else if (viewNum == 3)  // Top view
             {
-                player.transform.position = new Vector3(0.1f, distance, 0f);
+                player.transform.position = new Vector3(0f, distance, 0f);
             }
             else
             {
@@ -328,7 +333,7 @@ public class PlayerController : MonoBehaviour
 
     public void TopView()
     {
-        player.transform.position = new Vector3(0.1f, distance, 0f);
+        player.transform.position = new Vector3(0f, distance, 0f);
 
         mainCamera.orthographic = true;
         viewNum = 3;

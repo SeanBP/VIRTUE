@@ -52,7 +52,7 @@ public class PauseMenu : MonoBehaviour
 
     public UnityEngine.UI.Text errorText;
 
-    private string pdfFileName = "VIRTUE_User_Guide_V3_1_0.pdf";
+    private string pdfFileName = "VIRTUE_User_Guide_V3_2_0.pdf";
 
     public void ChangeVolume(float volume)
     {
@@ -216,25 +216,17 @@ public class PauseMenu : MonoBehaviour
     }
     public void ToggleHUD()
     {
-        if (HUDActive)
-        {
-            for (int i = 0; i < HUDs.Length; i++)
-            {
-                HUDs[i].SetActive(false);
-            }
-            HUDActive = false;
-            hudText.text = "Enable HUD";
-        }
-        else
-        {
-            for (int i = 0; i < HUDs.Length; i++)
-            {
-                HUDs[i].SetActive(true);
-            }
-            HUDActive = true;
-            hudText.text = "Disable HUD";
-        }
+        SetHUDActive(!HUDActive);
+    }
 
+    public void SetHUDActive(bool active)
+    {
+        for (int i = 0; i < HUDs.Length; i++)
+        {
+            HUDs[i].SetActive(active);
+        }
+        HUDActive = active;
+        hudText.text = active ? "Disable HUD" : "Enable HUD";
     }
 
     public void ToggleFullscreen()
@@ -319,7 +311,7 @@ public class PauseMenu : MonoBehaviour
     public void Credits()
     {
         controls.SetActive(false);
-        if (credits.active)
+        if (credits.activeSelf)
         {
             credits.SetActive(false);
         }
@@ -332,7 +324,7 @@ public class PauseMenu : MonoBehaviour
     public void Controls()
     {
         credits.SetActive(false);
-        if (controls.active)
+        if (controls.activeSelf)
         {
             controls.SetActive(false);
         }

@@ -27,6 +27,19 @@ public class EventLoader : MonoBehaviour
         public string color_bar = "";
         public string length_unit = "mm";
         public float scale = 1.0f;
+        // Optional: model file (StreamingAssets/Models) to auto-load alongside
+        // this event file. Ignored during a tour, which manages its own model
+        // via the tour file's own header.model_file.
+        public string model_file = "";
+        // Optional: same convention as TourMaker's EventSettings (time_before,
+        // speed) plus time_after, which the tour format doesn't have. Negative
+        // (default) means "not set" -- these populate the UI text fields once
+        // when the file loads, but don't touch them afterward, so the user can
+        // still type over them. Ignored during a tour, which takes precedence
+        // via its own scene event_settings (time_before/speed only).
+        public float time_before = -1f;
+        public float time_after = -1f;
+        public float speed = -1f;
     }
 
     [System.Serializable]
@@ -43,6 +56,8 @@ public class EventLoader : MonoBehaviour
     {
         public float B_field_T = 0f;
         public float[] tracker_boundary = new float[] { 100000f, 100000f, 100000f };
+        public float segment_ns = 0.1f;
+        public float[] B_field_direction = new float[] { 0f, 0f, 1f };
     }
 
     [System.Serializable]
@@ -161,15 +176,20 @@ public class EventLoader : MonoBehaviour
     private string headerVersion;
     private string headerExperiment;
     private float headerBField;
+    private Vector3 bFieldDirection = Vector3.forward;
     private float[] trackerGeometry;
 
     private string filename = "NCDIS_Q2=100_Pythia8";
     private string lastFilename = "NCDIS_Q2=100_Pythia8";
-    private string targetVersion = "3.1.0";
-    private List<string> compatibleVersions = new List<string> { "3.0.0" };
-    private float timeStep = 0.05f;
-    public float rate = 5; //speed of light is [rate] m/s
-    public InputField rateField;
+    private string targetVersion = "3.2.0";
+    // Intentionally empty: 3.2.0 is the only accepted event file version, since
+    // the toroid format change in ComponentMaker's Components schema means
+    // older-format model files are no longer guaranteed compatible, and event
+    // files are now held to the same single-version standard for consistency.
+    private List<string> compatibleVersions = new List<string>();
+    private float trackSegmentLength = 0.05f;
+    public float speed = 5; //speed of light is [speed] m/s
+    public InputField speedField;
     public InputField beforeField;
     public InputField afterField;
     private List<string> fileNames = new List<string>();
@@ -195,9 +215,21 @@ public class EventLoader : MonoBehaviour
     public bool inTour = false;
     public bool autoAnimate = true;
 
+    // Tracks whichever event-loading coroutine (dropdown/Resources-driven or
+    // file-picker-driven) is currently running, so a new load request can
+    // abort it via CancelAndClearCurrentLoad instead of being silently
+    // ignored or racing it with a second concurrent coroutine.
+    private Coroutine activeLoadCoroutine;
+
+    // Found at runtime the same way TourMaker finds both of these, since
+    // EventLoader and ComponentMaker are otherwise independent scripts.
+    private ComponentMaker componentMaker;
+
     // Start is called before the first frame update
     void Start()
     {
+        componentMaker = FindAnyObjectByType<ComponentMaker>();
+
         LoadFilesIntoDropdown();
         int initialIndex = fileNames.IndexOf(filename);
         if (initialIndex != -1)
@@ -228,7 +260,7 @@ public class EventLoader : MonoBehaviour
 
         // Apply per-scene event settings
         timeBeforeCollision = settings.time_before;
-        rate = settings.speed;
+        speed = settings.speed;
 
         if (settings.index != -1)
         {
@@ -309,25 +341,10 @@ public class EventLoader : MonoBehaviour
 
             // Now load the JSON data
             lastFilename = "";
-            animating = false;
-            looping = false;
 
-            start_time = 0f;
-            iEvt = 0;
-            clearingiEvt = -1;
+            CancelAndClearCurrentLoad();
 
-            DestroyGameObjects(hitObjects);
-            DestroyGameObjects(jetObjects);
-            DestroyGameObjects(clusterObjects);
-            DestroyGameObjects(trackObjects);
-            DestroyGameObjects(blockObjects);
-
-            foreach (var obj in particles)
-            {
-                if (obj != null)
-                    Destroy(obj);
-            }
-            StartCoroutine(LoadJSONFile(jsonFile));
+            activeLoadCoroutine = StartCoroutine(LoadJSONFile(jsonFile));
         }
         else
         {
@@ -403,32 +420,83 @@ public class EventLoader : MonoBehaviour
 
 
 
+    // Kept as a genuine zero-parameter method (not a default-value overload)
+    // because it's wired directly to UI Button.onClick in the scene, and
+    // Unity's persistent-call resolver only binds to an exact-arity match --
+    // a default parameter here would silently break that binding.
     public void LoadFile()
     {
-        if (!String.Equals(filename, lastFilename) && loadingEvent == false)
+        LoadFile(true);
+    }
+
+    // Stops whatever event-loading coroutine is currently running (a no-op
+    // if none is) and destroys anything it had created so far, so a new
+    // load always starts from a clean slate. Safe to call regardless of
+    // whether the previous load finished naturally, was still in progress,
+    // or never started -- DestroyGameObjects tolerates null arrays, which
+    // covers the case where this runs before any load has ever populated
+    // them.
+    private void CancelAndClearCurrentLoad()
+    {
+        if (activeLoadCoroutine != null)
         {
-
-            lastFilename = filename;
-            animating = false;
-            looping = false;
-
-            start_time = 0f;
-            iEvt = 0;
-            clearingiEvt = -1;
-
-            DestroyGameObjects(hitObjects);
-            DestroyGameObjects(jetObjects);
-            DestroyGameObjects(clusterObjects);
-            DestroyGameObjects(trackObjects);
-            DestroyGameObjects(blockObjects);
-
-            foreach (var obj in particles)
-            {
-                if (obj != null)
-                    Destroy(obj);
-            }
-            StartCoroutine(LoadJSONFile());
+            StopCoroutine(activeLoadCoroutine);
+            activeLoadCoroutine = null;
         }
+
+        loadingEvent = false;
+        animating = false;
+        looping = false;
+
+        start_time = 0f;
+        iEvt = 0;
+        clearingiEvt = -1;
+
+        DestroyGameObjects(hitObjects);
+        DestroyGameObjects(jetObjects);
+        DestroyGameObjects(clusterObjects);
+        DestroyGameObjects(trackObjects);
+        DestroyGameObjects(blockObjects);
+
+        foreach (var obj in particles)
+        {
+            if (obj != null)
+                Destroy(obj);
+        }
+        particles.Clear();
+    }
+
+    // chaseCompanion controls whether a successfully-loaded event's own
+    // header.model_file gets auto-loaded afterward. Direct/manual loads
+    // (via the parameterless LoadFile() above) chase it; companion loads
+    // triggered the other way (LoadEventFile, below) don't, so the two
+    // headers can never chase each other in a loop and the file the user
+    // actually selected always wins.
+    //
+    // No longer gated on loadingEvent == false: selecting a different file
+    // while one is still loading now aborts and cleans up the in-progress
+    // load (via CancelAndClearCurrentLoad) instead of the request being
+    // silently ignored.
+    private void LoadFile(bool chaseCompanion)
+    {
+        if (!String.Equals(filename, lastFilename))
+        {
+            lastFilename = filename;
+
+            CancelAndClearCurrentLoad();
+
+            activeLoadCoroutine = StartCoroutine(LoadJSONFile(chaseCompanion));
+        }
+    }
+
+    // For external callers (e.g. ComponentMaker.cs, when a model file's own
+    // header.event_file names an event) that just want a named event file
+    // loaded normally. This event's own header.model_file (if any) is not
+    // chased, since the model file that led here already takes precedence.
+    public void LoadEventFile(string newFilename)
+    {
+        filename = newFilename;
+        LoadFile(chaseCompanion: false);
     }
 
     private void CreateParticle(Particle particleData, float scale)
@@ -457,7 +525,7 @@ public class EventLoader : MonoBehaviour
         directions.Add(direction);
     }
 
-    public IEnumerator LoadJSONFile(TextAsset jsonFile)
+    public IEnumerator LoadJSONFile(TextAsset jsonFile, bool chaseCompanion = true)
     {
 
         loadingEvent = true;
@@ -485,7 +553,7 @@ public class EventLoader : MonoBehaviour
         if (String.Equals(headerVersion, targetVersion) || compatibleVersions.Contains(headerVersion))
         {
             errorText.text = "Loading events: 0% complete";
-            ParseHeader(eventDataWrapper);
+            ParseHeader(eventDataWrapper, chaseCompanion);
             
             int numEvents = eventDataWrapper.events.Count;
             InitializeEventArrays(numEvents);
@@ -500,23 +568,61 @@ public class EventLoader : MonoBehaviour
 
             for (int i = 0; i < numEvents; i++)
             {
-                ParseEnergyScale(eventDataWrapper.events[i].event_data, i);
-                SetHUD();
+                // yield return isn't allowed inside a try/catch block in C#
+                // iterators, so each step below is caught individually
+                // (rather than wrapping the whole per-event body) -- without
+                // this, one malformed event (e.g. a stray null from a JSON
+                // field JsonUtility couldn't populate) would throw
+                // uncaught, silently killing this coroutine mid-loop:
+                // loadingEvent would never reset to false and errorText
+                // would stay stuck at whatever percentage it last reached,
+                // with no error message and no way to recover short of
+                // restarting the app.
+                bool eventOk = true;
+                try
+                {
+                    ParseEnergyScale(eventDataWrapper.events[i].event_data, i);
+                    SetHUD();
+                    (hitObjects[i], hitTime[i]) = CreateHitObjects(eventDataWrapper.events[i].hits);
+                }
+                catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                yield return null;
 
-                (hitObjects[i], hitTime[i]) = CreateHitObjects(eventDataWrapper.events[i].hits);
+                if (eventOk)
+                {
+                    try { (blockObjects[i], blockTime[i]) = CreateBlockObjects(eventDataWrapper.events[i].blocks); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (blockObjects[i], blockTime[i]) = CreateBlockObjects(eventDataWrapper.events[i].blocks);
+
+                if (eventOk)
+                {
+                    try { (clusterObjects[i], clusterTime[i]) = CreateClusterObjects(eventDataWrapper.events[i].clusters); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (clusterObjects[i], clusterTime[i]) = CreateClusterObjects(eventDataWrapper.events[i].clusters);
+
+                if (eventOk)
+                {
+                    try { (jetObjects[i], jetTime[i]) = CreateJetObjects(eventDataWrapper.events[i].jets); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (jetObjects[i], jetTime[i]) = CreateJetObjects(eventDataWrapper.events[i].jets);
+
+                if (eventOk)
+                {
+                    try { (trackObjects[i], trackTime[i]) = CreateTrackObjects(eventDataWrapper.events[i].tracks); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (trackObjects[i], trackTime[i]) = CreateTrackObjects(eventDataWrapper.events[i].tracks);
-                yield return null;
+
+                if (!eventOk) break;
+
                 int percentage = Mathf.RoundToInt(((float)(i + 1) / numEvents) * 100f);
                 errorText.text = $"Loading events: {percentage}% complete";
             }
-            errorText.text = "";
+            if (!String.IsNullOrEmpty(errorText.text) && errorText.text.StartsWith("Loading events"))
+                errorText.text = "";
         }
         else
         {
@@ -526,12 +632,19 @@ public class EventLoader : MonoBehaviour
 
         start_time = Time.time;
         loadingEvent = false;
-        
+        activeLoadCoroutine = null;
+
         SetHUD();
         LoopAnimation();
     }
 
-    public IEnumerator LoadJSONFile()
+    private void ReportEventLoadError(Exception ex, int eventIndex)
+    {
+        errorText.text = $"Error loading event {eventIndex}: " + ex.Message;
+        UnityEngine.Debug.LogError($"Error loading event {eventIndex}: " + ex);
+    }
+
+    public IEnumerator LoadJSONFile(bool chaseCompanion = true)
     {
         loadingEvent = true;
 
@@ -572,7 +685,7 @@ public class EventLoader : MonoBehaviour
         if (String.Equals(headerVersion, targetVersion) || compatibleVersions.Contains(headerVersion))
         {
             errorText.text = "Loading events: 0% complete";
-            ParseHeader(eventDataWrapper);
+            ParseHeader(eventDataWrapper, chaseCompanion);
 
             int numEvents = eventDataWrapper.events.Count;
             InitializeEventArrays(numEvents);
@@ -587,23 +700,55 @@ public class EventLoader : MonoBehaviour
             SetHUD();
             for (int i = 0; i < numEvents; i++)
             {
-                ParseEnergyScale(eventDataWrapper.events[i].event_data, i);
-                SetHUD();
+                // See the matching loop in LoadJSONFile(TextAsset, bool) for
+                // why each step is caught individually instead of wrapping
+                // the whole per-event body: yield return isn't allowed
+                // inside a try/catch block in C# iterators.
+                bool eventOk = true;
+                try
+                {
+                    ParseEnergyScale(eventDataWrapper.events[i].event_data, i);
+                    SetHUD();
+                    (hitObjects[i], hitTime[i]) = CreateHitObjects(eventDataWrapper.events[i].hits);
+                }
+                catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                yield return null;
 
-                (hitObjects[i], hitTime[i]) = CreateHitObjects(eventDataWrapper.events[i].hits);
+                if (eventOk)
+                {
+                    try { (blockObjects[i], blockTime[i]) = CreateBlockObjects(eventDataWrapper.events[i].blocks); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (blockObjects[i], blockTime[i]) = CreateBlockObjects(eventDataWrapper.events[i].blocks);
+
+                if (eventOk)
+                {
+                    try { (clusterObjects[i], clusterTime[i]) = CreateClusterObjects(eventDataWrapper.events[i].clusters); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (clusterObjects[i], clusterTime[i]) = CreateClusterObjects(eventDataWrapper.events[i].clusters);
+
+                if (eventOk)
+                {
+                    try { (jetObjects[i], jetTime[i]) = CreateJetObjects(eventDataWrapper.events[i].jets); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (jetObjects[i], jetTime[i]) = CreateJetObjects(eventDataWrapper.events[i].jets);
+
+                if (eventOk)
+                {
+                    try { (trackObjects[i], trackTime[i]) = CreateTrackObjects(eventDataWrapper.events[i].tracks); }
+                    catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
+                }
                 yield return null;
-                (trackObjects[i], trackTime[i]) = CreateTrackObjects(eventDataWrapper.events[i].tracks);
-                yield return null;
+
+                if (!eventOk) break;
+
                 int percentage = Mathf.RoundToInt(((float)(i + 1) / numEvents) * 100f);
                 errorText.text = $"Loading events: {percentage}% complete";
             }
-            errorText.text = "";
+            if (!String.IsNullOrEmpty(errorText.text) && errorText.text.StartsWith("Loading events"))
+                errorText.text = "";
         }
         else
         {
@@ -613,12 +758,13 @@ public class EventLoader : MonoBehaviour
 
         start_time = Time.time;
         loadingEvent = false;
+        activeLoadCoroutine = null;
 
         SetHUD();
         LoopAnimation();
     }
 
-    private void ParseHeader(EventDataWrapper eventDataWrapper)
+    private void ParseHeader(EventDataWrapper eventDataWrapper, bool chaseCompanion = true)
     {
         headerExperiment = eventDataWrapper.header.experiment;
         headerBField = eventDataWrapper.header.tracker_settings.B_field_T;
@@ -637,6 +783,13 @@ public class EventLoader : MonoBehaviour
         };
         totScale = scale * units;
         trackerGeometry = eventDataWrapper.header.tracker_settings.tracker_boundary;
+        trackSegmentLength = eventDataWrapper.header.tracker_settings.segment_ns;
+        Vector3 bDir = new Vector3(
+            eventDataWrapper.header.tracker_settings.B_field_direction[0],
+            eventDataWrapper.header.tracker_settings.B_field_direction[1],
+            eventDataWrapper.header.tracker_settings.B_field_direction[2]
+        );
+        bFieldDirection = bDir.sqrMagnitude > 0f ? bDir.normalized : Vector3.forward;
         eScale = energy_unit.ToLowerInvariant() switch
         {
             "ev" => Math.Pow(10, 0),
@@ -648,6 +801,53 @@ public class EventLoader : MonoBehaviour
             "eev" => Math.Pow(10, 18),
             _ => Math.Pow(10, 9),
         };
+
+        // A tour manages its own model (tour header.model_file) and timing
+        // (per-scene event_settings.time_before/speed) -- both take
+        // precedence over anything set here, so skip entirely while inTour.
+        // chaseCompanion is also false when this event file was itself
+        // auto-loaded via a model file's header.event_file -- we don't chase
+        // this event's own header.model_file back, so the model the user
+        // actually selected always wins and the two headers can't loop.
+        if (!inTour && chaseCompanion)
+        {
+            if (!string.IsNullOrEmpty(eventDataWrapper.header.model_file) && componentMaker != null)
+            {
+                componentMaker.LoadModelFile(eventDataWrapper.header.model_file);
+            }
+
+            // beforeField/afterField/speedField are unassigned in this
+            // project's scene -- unlike Lite/Desktop, Mobile has no visible
+            // InputField UI for time_before/time_after/speed. When the
+            // field exists, keep the original behavior of writing its text
+            // (Update() parses that back into timeBeforeCollision/speed each
+            // frame, same as Lite/Desktop). When it doesn't, apply the
+            // value directly to the runtime state instead, the same way
+            // AnimateEventCoroutine already does for tours (timeBeforeCollision
+            // = settings.time_before; speed = settings.speed) -- the setting
+            // still takes effect, it just has nothing to display it in.
+            if (eventDataWrapper.header.time_before >= 0f)
+            {
+                if (beforeField != null)
+                    beforeField.text = eventDataWrapper.header.time_before.ToString();
+                else
+                    timeBeforeCollision = eventDataWrapper.header.time_before;
+            }
+            if (eventDataWrapper.header.time_after >= 0f)
+            {
+                if (afterField != null)
+                    afterField.text = eventDataWrapper.header.time_after.ToString();
+                else
+                    timeAfterCollision = eventDataWrapper.header.time_after;
+            }
+            if (eventDataWrapper.header.speed >= 0f)
+            {
+                if (speedField != null)
+                    speedField.text = eventDataWrapper.header.speed.ToString();
+                else
+                    speed = eventDataWrapper.header.speed;
+            }
+        }
     }
 
     private void InitializeEventArrays(int numEvents)
@@ -665,6 +865,26 @@ public class EventLoader : MonoBehaviour
         clusterTime = new float[numEvents][];
         jetTime = new float[numEvents][];
         trackTime = new List<float>[numEvents];
+
+        // Pre-filled with empty (non-null) placeholders rather than left
+        // null, so that if the per-event loading loop bails out early on a
+        // malformed event, every later index is still safe for Update()
+        // and event navigation to iterate over instead of null-refing.
+        for (int i = 0; i < numEvents; i++)
+        {
+            hitObjects[i] = Array.Empty<GameObject>();
+            blockObjects[i] = Array.Empty<GameObject>();
+            clusterObjects[i] = Array.Empty<GameObject>();
+            jetObjects[i] = Array.Empty<GameObject>();
+            trackObjects[i] = new List<GameObject>();
+            hitTime[i] = Array.Empty<float>();
+            blockTime[i] = Array.Empty<float>();
+            clusterTime[i] = Array.Empty<float>();
+            jetTime[i] = Array.Empty<float>();
+            trackTime[i] = new List<float>();
+            infoTexts[i] = "";
+        }
+
         particles = new List<GameObject>();
         finalPositions = new List<Vector3>();
         directions = new List<Vector3>();
@@ -672,6 +892,10 @@ public class EventLoader : MonoBehaviour
 
     private void ParseEnergyScale(Event_Data eventData, int index)
     {
+        // JsonUtility leaves this null (not a default-constructed instance)
+        // when an event's JSON simply omits the "event_data" key.
+        eventData ??= new Event_Data();
+
         if (eventData.energy_scale != null && eventData.energy_scale.Length == 2)
         {
             minTexts[index] = eventData.energy_scale[0];
@@ -702,6 +926,11 @@ public class EventLoader : MonoBehaviour
 
     private (GameObject[], float[]) CreateHitObjects(List<Hits> hits)
     {
+        // JsonUtility leaves this null (not an empty list) when the JSON
+        // simply omits the "hits" key for an event, which is a normal way
+        // for an event file to say "no hits this event" -- treat it the
+        // same as an empty array instead of throwing.
+        hits ??= new List<Hits>();
 
         int hitSize = hits.Count;
         GameObject[] eventHitObjects = new GameObject[hitSize];
@@ -736,6 +965,7 @@ public class EventLoader : MonoBehaviour
 
     private (GameObject[], float[]) CreateBlockObjects(List<Blocks> blocks)
     {
+        blocks ??= new List<Blocks>();
 
         int blockSize = blocks.Count;
 
@@ -766,6 +996,7 @@ public class EventLoader : MonoBehaviour
 
     private (GameObject[], float[]) CreateClusterObjects(List<Clusters> clusters)
     {
+        clusters ??= new List<Clusters>();
         int clusterSize = clusters.Count;
 
         GameObject[] eventClusterObjects = new GameObject[clusterSize];
@@ -814,6 +1045,7 @@ public class EventLoader : MonoBehaviour
 
     private (GameObject[], float[]) CreateJetObjects(List<Jets> jets)
     {
+        jets ??= new List<Jets>();
         int jetSize = jets.Count;
 
         GameObject[] eventJetObjects = new GameObject[jetSize];
@@ -863,6 +1095,7 @@ public class EventLoader : MonoBehaviour
     }
     private (List<GameObject>, List<float>) CreateTrackObjects(List<Tracks> tracks)
     {
+        tracks ??= new List<Tracks>();
         int trackSize = tracks.Count;
 
         List<GameObject> eventTracks = new List<GameObject>();
@@ -913,7 +1146,6 @@ public class EventLoader : MonoBehaviour
             float c = 0.299792f;  // m/ns
 
             Vector3 momentum = new Vector3(px, py, pz);
-            float Pxy = Mathf.Sqrt(px * px + py * py);
             float P = momentum.magnitude;
 
             if (q == 0 || B == 0)
@@ -924,7 +1156,7 @@ public class EventLoader : MonoBehaviour
                 float vy = direction.y * c;
                 float vz = direction.z * c;
 
-                for (float t = 0; t <= endTime; t += timeStep)
+                for (float t = 0; t <= endTime; t += trackSegmentLength)
                 {
                     Vector3 startPosition = new Vector3(
                         vx * t + xo,
@@ -933,9 +1165,9 @@ public class EventLoader : MonoBehaviour
                     );
 
                     Vector3 endPosition = new Vector3(
-                        vx * (t + timeStep) + xo,
-                        vy * (t + timeStep) + yo,
-                        vz * (t + timeStep) + zo
+                        vx * (t + trackSegmentLength) + xo,
+                        vy * (t + trackSegmentLength) + yo,
+                        vz * (t + trackSegmentLength) + zo
                     );
 
                     float posR = Mathf.Sqrt(endPosition.x * endPosition.x + endPosition.y * endPosition.y);
@@ -945,7 +1177,7 @@ public class EventLoader : MonoBehaviour
                         break;
                     }
 
-                    eventTrackTimes.Add(t + timeStep + startTime);
+                    eventTrackTimes.Add(t + trackSegmentLength + startTime);
 
                     GameObject segment = new GameObject();
                     LineRenderer lineRenderer = segment.AddComponent<LineRenderer>();
@@ -967,29 +1199,51 @@ public class EventLoader : MonoBehaviour
             }
             else
             {
-                float radius = Pxy / (q * B);
-                float omega = (q * B / P) * c;
-                float initialPhase = Mathf.Atan2(px, py);
+                // px is reconstructed above with a sign flip relative to py/pz
+                // (px = -p sin(theta) cos(phi)) -- a long-standing convention,
+                // shared with vertex positions (xo = -vertex.x), for the
+                // right-handed-to-Unity-left-handed display flip. For straight
+                // tracks that's a harmless pure reflection, but the Lorentz
+                // force dv/dt = (q/m)(v x B) is only symmetric under an
+                // X-only reflection of v if B is reflected too -- as a
+                // pseudovector, i.e. with its Y and Z components negated
+                // instead of X (verified: this is the unique field transform
+                // that keeps R_x(v) x B' = R_x(v x B) an identity for all
+                // v, B). Without this correction, curvature around any field
+                // with a Y or Z component doesn't correctly correspond to the
+                // momentum/field the caller specified.
+                Vector3 bFieldEffective = new Vector3(bFieldDirection.x, -bFieldDirection.y, -bFieldDirection.z);
 
-                float vz = Mathf.Sqrt(c * c - (radius * omega) * (radius * omega));
-                if (pz < 0) vz = -vz;
-
-                float x0 = -radius * Mathf.Cos(initialPhase);
-                float y0 = radius * Mathf.Sin(initialPhase);
-
-                for (float t = 0; t <= endTime; t += timeStep)
+                // Build a right-handed orthonormal basis {e1, e2, bFieldEffective}
+                // spanning the plane perpendicular to the field (e1 x e2 =
+                // bFieldEffective). For the default bFieldDirection = +Z this
+                // reduces to e1 = -X, e2 = +Y.
+                Vector3 e1 = Vector3.Cross(Vector3.up, bFieldEffective);
+                if (e1.sqrMagnitude < 1e-6f)
                 {
-                    float x = -radius * Mathf.Cos(omega * t + initialPhase) - x0 + xo;
-                    float y = radius * Mathf.Sin(omega * t + initialPhase) - y0 + yo;
-                    float z = vz * t + zo;
+                    e1 = Vector3.Cross(Vector3.right, bFieldEffective);
+                }
+                e1 = e1.normalized;
+                Vector3 e2 = Vector3.Cross(bFieldEffective, e1);
 
-                    Vector3 startPosition = new Vector3(x, y, z);
+                float omega = (q * B / P) * c;
+                float vPar = c * Vector3.Dot(momentum, bFieldEffective) / P;
+                float a0 = c * Vector3.Dot(momentum, e1) / P;
+                float b0 = c * Vector3.Dot(momentum, e2) / P;
 
-                    float x2 = -radius * Mathf.Cos(omega * (t + timeStep) + initialPhase) - x0 + xo;
-                    float y2 = radius * Mathf.Sin(omega * (t + timeStep) + initialPhase) - y0 + yo;
-                    float z2 = vz * (t + timeStep) + zo;
+                Vector3 vertexPos = new Vector3(xo, yo, zo);
 
-                    Vector3 endPosition = new Vector3(x2, y2, z2);
+                Vector3 HelixPosition(float ht)
+                {
+                    float e1Coeff = (a0 * Mathf.Sin(omega * ht) + b0 * (1f - Mathf.Cos(omega * ht))) / omega;
+                    float e2Coeff = (a0 * (Mathf.Cos(omega * ht) - 1f) + b0 * Mathf.Sin(omega * ht)) / omega;
+                    return vertexPos + e1Coeff * e1 + e2Coeff * e2 + vPar * ht * bFieldEffective;
+                }
+
+                for (float t = 0; t <= endTime; t += trackSegmentLength)
+                {
+                    Vector3 startPosition = HelixPosition(t);
+                    Vector3 endPosition = HelixPosition(t + trackSegmentLength);
 
                     float posR = Mathf.Sqrt(endPosition.x * endPosition.x + endPosition.y * endPosition.y);
 
@@ -998,7 +1252,7 @@ public class EventLoader : MonoBehaviour
                         break;
                     }
 
-                    eventTrackTimes.Add(t + timeStep + startTime);
+                    eventTrackTimes.Add(t + trackSegmentLength + startTime);
 
                     GameObject segment = new GameObject();
                     LineRenderer lineRenderer = segment.AddComponent<LineRenderer>();
@@ -1097,25 +1351,32 @@ public class EventLoader : MonoBehaviour
                 MinText.text = "";
             }
 
+            // speedField/beforeField/afterField are null on Mobile (no UI
+            // for them) -- skip re-reading from the field entirely rather
+            // than letting float.Parse throw on a null .text access every
+            // frame, which used to silently reset speed/timeBeforeCollision/
+            // timeAfterCollision back to a hardcoded default every frame,
+            // permanently overwriting whatever ParseHeader had just applied
+            // directly from the event file's header.
             try
             {
-                if (!inTour)
-                    rate = float.Parse(rateField.text);
+                if (!inTour && speedField != null)
+                    speed = float.Parse(speedField.text);
             }
             catch
             {
-                rate = 0.001f * 5f / totScale;
+                speed = 0.001f * 5f / totScale;
 
             }
-            if (rate < 0 || rate > 100)
+            if (speed < 0 || speed > 100)
             {
-                if (!inTour)
-                    rate = 0.001f * 5f / totScale;
+                if (!inTour && speedField != null)
+                    speed = 0.001f * 5f / totScale;
             }
 
             try
             {
-                if (!inTour)
+                if (!inTour && beforeField != null)
                     timeBeforeCollision = float.Parse(beforeField.text);
             }
             catch
@@ -1125,13 +1386,14 @@ public class EventLoader : MonoBehaviour
             }
             if (timeBeforeCollision < 0 || timeBeforeCollision > 9999)
             {
-                if (!inTour)
+                if (!inTour && beforeField != null)
                     timeBeforeCollision = 0.001f * 15f / totScale;
             }
 
             try
             {
-                timeAfterCollision = float.Parse(afterField.text);
+                if (afterField != null)
+                    timeAfterCollision = float.Parse(afterField.text);
             }
             catch
             {
@@ -1158,7 +1420,7 @@ public class EventLoader : MonoBehaviour
             {
                 if (animating)
                 {
-                    float elapsedTime = (Time.time - start_time) * rate / c;
+                    float elapsedTime = (Time.time - start_time) * speed / c;
 
                     timeText.text = string.Format("{0:f0}", Math.Round(elapsedTime - timeBeforeCollision)) + " ns";
 
@@ -1169,7 +1431,7 @@ public class EventLoader : MonoBehaviour
                         {
                             StartCoroutine(ClearHitsCoroutine(iEvt));
                             start_time = Time.time;
-                            elapsedTime = (Time.time - start_time) * rate / c;
+                            elapsedTime = (Time.time - start_time) * speed / c;
                             iEvt++;
                             if (iEvt == hitObjects.Length)
                             {
@@ -1446,6 +1708,8 @@ public class EventLoader : MonoBehaviour
 
     void DestroyGameObjects(List<GameObject>[] gameObjectsList)
     {
+        if (gameObjectsList == null) return;
+
         foreach (var objects in gameObjectsList)
         {
             foreach (var obj in objects)
@@ -1458,6 +1722,8 @@ public class EventLoader : MonoBehaviour
     }
     void DestroyGameObjects(GameObject[][] objectsArray)
     {
+        if (objectsArray == null) return;
+
         foreach (var objects in objectsArray)
         {
             foreach (var obj in objects)
