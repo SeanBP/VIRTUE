@@ -150,7 +150,7 @@ mcpart_vtx_z = tree["mcpart_Vtx_z"].array(library="np")
 
 output = {
     "header": {
-        "version": "3.1.1",
+        "version": "3.2.0",
         "experiment": "STAR FCS",
         "energy_unit": "GeV",
         "color_bar": "Log",

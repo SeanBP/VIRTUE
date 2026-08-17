@@ -223,7 +223,7 @@ bjorken_x = np.array(tree["InclusiveKinematicsTruth.x"])
 
 output = {
     "header": {
-        "version": "3.0.0",
+        "version": "3.2.0",
         "experiment": f"ePIC {EVENT_TYPE}",
         "energy_unit": "GeV",
         "color_bar": "Log",

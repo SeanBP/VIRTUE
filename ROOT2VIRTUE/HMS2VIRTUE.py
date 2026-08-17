@@ -771,7 +771,7 @@ def build_track_segments(vertex0, momentum0, p_mag):
 
 output = {
     "header": {
-        "version": "3.1.1",
+        "version": "3.2.0",
         "experiment": "Hall C HMS",
         "energy_unit": "GeV",
         "color_bar": "Log",
