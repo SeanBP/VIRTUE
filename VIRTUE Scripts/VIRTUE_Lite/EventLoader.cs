@@ -645,13 +645,28 @@ public class EventLoader : MonoBehaviour
             {
                 beforeField.text = eventDataWrapper.header.time_before.ToString();
             }
+            else
+            {
+                // Not specified in this file -- clear the field so Update()'s
+                // per-frame reparse falls through to its own default instead
+                // of keeping whatever the previously loaded file set.
+                beforeField.text = "";
+            }
             if (eventDataWrapper.header.time_after >= 0f)
             {
                 afterField.text = eventDataWrapper.header.time_after.ToString();
             }
+            else
+            {
+                afterField.text = "";
+            }
             if (eventDataWrapper.header.speed >= 0f)
             {
                 speedField.text = eventDataWrapper.header.speed.ToString();
+            }
+            else
+            {
+                speedField.text = "";
             }
         }
     }

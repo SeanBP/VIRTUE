@@ -658,6 +658,16 @@ public class EventLoader : MonoBehaviour
                 else
                     timeBeforeCollision = eventDataWrapper.header.time_before;
             }
+            else
+            {
+                // Not specified in this file -- reset back to the same
+                // default Update() falls back to when beforeField exists,
+                // instead of leaving whatever the previous file set.
+                if (beforeField != null)
+                    beforeField.text = "";
+                else
+                    timeBeforeCollision = 0.001f * 15f / totScale;
+            }
             if (eventDataWrapper.header.time_after >= 0f)
             {
                 if (afterField != null)
@@ -665,12 +675,26 @@ public class EventLoader : MonoBehaviour
                 else
                     timeAfterCollision = eventDataWrapper.header.time_after;
             }
+            else
+            {
+                if (afterField != null)
+                    afterField.text = "";
+                else
+                    timeAfterCollision = 0.001f * 60f / totScale;
+            }
             if (eventDataWrapper.header.speed >= 0f)
             {
                 if (speedField != null)
                     speedField.text = eventDataWrapper.header.speed.ToString();
                 else
                     speed = eventDataWrapper.header.speed;
+            }
+            else
+            {
+                if (speedField != null)
+                    speedField.text = "";
+                else
+                    speed = 0.001f * 5f / totScale;
             }
         }
     }
