@@ -2,7 +2,7 @@
 
 VIRTUE is a standalone customizable event display for collider experiments for desktop or virtual reality (VR). It features a simplified model of the ePIC detector for the future Electron-Ion Collider, along with simulated electron-proton collisions. New collision data and detector geometries can be uploaded into the program as JSON or FBX files within the application folder.
 
-The application is available for free on [Steam](https://store.steampowered.com/app/2728380/VIRTUE), [Google Play](https://play.google.com/store/apps/details?id=com.Quantanaut.VIRTUE&hl=en_US), and [Zenodo](https://doi.org/10.5281/zenodo.10372110). This GitHub repository hosts VIRTUE Lite, a lightweight edition of the full desktop application.
+The application is available for free on [GitHub](https://github.com/SeanBP/VIRTUE), [Steam](https://store.steampowered.com/app/2728380/VIRTUE), [Google Play](https://play.google.com/store/apps/details?id=com.Quantanaut.VIRTUE&hl=en_US), and [Zenodo](https://doi.org/10.5281/zenodo.10372110). This GitHub repository hosts VIRTUE Lite, a lightweight edition of the full desktop application.
 
 ## Contents
 
