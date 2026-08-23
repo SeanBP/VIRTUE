@@ -10,130 +10,14 @@ using System.Linq;
 using System.Collections.Specialized;
 using TMPro;
 using System.CodeDom;
-using static EventLoader;
+using VirtueCore.Events;
+using VirtueCore.Tours;
+using VirtueCore.Shared;
 
 
 
 public class EventLoader : MonoBehaviour
 {
-    [System.Serializable]
-    public class Header
-    {
-        public string version;
-        public string experiment = "";
-        public List<Particle> particles;
-        public TrackerSettings tracker_settings;
-        public string energy_unit = "GeV";
-        public string color_bar = "";
-        public string length_unit = "mm";
-        public float scale = 1.0f;
-        // Optional: model file (StreamingAssets/Models) to auto-load alongside
-        // this event file. Ignored during a tour, which manages its own model
-        // via the tour file's own header.model_file.
-        public string model_file = "";
-        // Optional: same convention as TourMaker's EventSettings (time_before,
-        // speed) plus time_after, which the tour format doesn't have. Negative
-        // (default) means "not set" -- these populate the UI text fields once
-        // when the file loads, but don't touch them afterward, so the user can
-        // still type over them. Ignored during a tour, which takes precedence
-        // via its own scene event_settings (time_before/speed only).
-        public float time_before = -1f;
-        public float time_after = -1f;
-        public float speed = -1f;
-    }
-
-    [System.Serializable]
-    public class Particle
-    {
-        public float[] ip = new float[] { 0f, 0f, 0f };
-        public float[] angle_rad;
-        public float[] color_rgba = new float[] { 1f, 1f, 1f, 1f };
-        public float size = 100f;
-    }
-
-    [System.Serializable]
-    public class TrackerSettings
-    {
-        public float B_field_T = 0f;
-        public float[] tracker_boundary = new float[] { 100000f, 100000f, 100000f };
-        public float segment_ns = 0.05f;
-        public float[] B_field_direction = new float[] { 0f, 0f, 1f };
-    }
-
-    [System.Serializable]
-    public class Event_Data
-    {
-        public string info_text = "";
-        public float[] energy_scale = null;
-    }
-    [System.Serializable]
-    public class Hits
-    {
-        public float[] position;
-        public float time_ns = 0f;
-        public float size;
-        public float[] color_rgba = new float[] { 1f, 1f, 1f, 1f };
-    }
-
-    [System.Serializable]
-    public class Clusters
-    {
-        public float[] position;
-        public float granularity;
-        public float length;
-        public float time_ns = 0f;
-        public float[] color_rgba = new float[] { 1f, 1f, 1f, 1f };
-    }
-
-    [System.Serializable]
-    public class Tracks
-    {
-        public float qOverP = 0f;
-        public float[] angle_rad;
-        public float[] vertex = new float[] { 0f, 0f, 0f };
-        public float[] duration_ns = new float[] { 0f, 100f };
-        public float[] color_rgba = new float[] { 1f, 1f, 1f, 1f };
-    }
-
-    [System.Serializable]
-    public class Jets
-    {
-        public float length = 100f;
-        public float R_rad;
-        public float time_ns = 0f;
-        public float[] angle_rad;
-        public float[] vertex = new float[] { 0f, 0f, 0f };
-        public float[] color_rgba = new float[] { 1f, 1f, 1f, 0.5f };
-    }
-    [System.Serializable]
-    public class Blocks
-    {
-        public float[] position = new float[] { 0f, 0f, 0f };
-        public float[] euler_angles_deg = new float[] { 0f, 0f, 0f };
-        public float[] size = new float[] { 1f, 1f, 1f };
-        public float time_ns = 0f;
-        public float[] color_rgba = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
-    }
-
-
-    [System.Serializable]
-    public class EventData
-    {
-        public Event_Data event_data;
-        public List<Hits> hits;
-        public List<Clusters> clusters;
-        public List<Tracks> tracks;
-        public List<Jets> jets;
-        public List<Blocks> blocks;
-    }
-
-    [System.Serializable]
-    public class EventDataWrapper
-    {
-        public Header header;
-        public List<EventData> events;
-    }
-
     public bool autoAnimate = true;
 
     public UnityEngine.UI.Text timeText;
@@ -183,12 +67,11 @@ public class EventLoader : MonoBehaviour
 
     public string filename = "NCDIS_Q2=100_Pythia8.json";
     private string lastFilename = "NCDIS_Q2=100_Pythia8.json";
-    private string targetVersion = "3.2.0";
-    // Intentionally empty: 3.2.0 is the only accepted event file version, since
-    // the toroid format change in ComponentMaker's Components schema means
-    // older-format model files are no longer guaranteed compatible, and event
-    // files are now held to the same single-version standard for consistency.
-    private List<string> compatibleVersions = new List<string>();
+    private string targetVersion = "3.2.1";
+    // 3.2.0 event files remain compatible: the only change since then is the
+    // header field rename (experiment -> title), which this parser already
+    // accepts via the legacy experiment alias above.
+    private List<string> compatibleVersions = new List<string> { "3.2.0" };
     private float trackSegmentLength = 0.05f;
     public float speed = 5f; //speed of light is [speed] m/s
     public InputField speedField;
@@ -267,37 +150,37 @@ public class EventLoader : MonoBehaviour
         if (settings.index != -1)
         {
             iEvt = settings.index;
-            
+
             AnimateHits();
         }
         else
         {
-   
+
             looping = false;
             animating = false;
         }
     }
 
 
-    public void LoadTourFile(string newFilename) 
-    { 
-        StartCoroutine(LoadTourFileCoroutine(newFilename)); 
+    public void LoadTourFile(string newFilename)
+    {
+        StartCoroutine(LoadTourFileCoroutine(newFilename));
     }
 
-    private IEnumerator LoadTourFileCoroutine(string newFilename) 
-    { 
+    private IEnumerator LoadTourFileCoroutine(string newFilename)
+    {
         loadingTour = true;
         inTour = true;
-        yield return new WaitUntil(() => activeCoroutines == 0); 
-        yield return new WaitUntil(() => loadingEvent == false); 
-        autoAnimate = false; 
-        lastFilename = filename; 
+        yield return new WaitUntil(() => activeCoroutines == 0);
+        yield return new WaitUntil(() => loadingEvent == false);
+        autoAnimate = false;
+        lastFilename = filename;
         filename = newFilename;
-        
+
         LoadFile();
         SetHUD();
-        yield return new WaitUntil(() => loadingEvent == false); 
-        loadingTour = false; 
+        yield return new WaitUntil(() => loadingEvent == false);
+        loadingTour = false;
     }
 
 
@@ -433,37 +316,6 @@ public class EventLoader : MonoBehaviour
         LoadFile(chaseCompanion: false);
     }
 
-    private void CreateParticle(Particle particleData, float scale)
-    {
-        // Create a particle GameObject
-        GameObject particle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        particle.transform.localScale = new Vector3(particleData.size * totScale, particleData.size * totScale, particleData.size * totScale);
-        particle.GetComponent<Collider>().enabled = false;
-        particle.GetComponent<Renderer>().enabled = false;
-
-        // Set particle material and color
-        Material particleMaterial = MakeMaterial(particleData.color_rgba);
-        particleMaterial.renderQueue = -1;
-        particle.GetComponent<MeshRenderer>().sharedMaterial = particleMaterial;
-
-        // Store the final position and direction. ip.x is negated to match
-        // the same right-handed-to-Unity-left-handed display convention
-        // used everywhere else (hits/blocks/tracks all negate x); the
-        // direction formula's -Cos(b)*Sin(a) term already carries the
-        // matching asymmetric sign (parallel to how track momentum's px
-        // is reconstructed), so only the position needed this fix.
-        Vector3 ip = new Vector3(-particleData.ip[0] * totScale, particleData.ip[1] * totScale, particleData.ip[2] * totScale);
-        Vector3 direction = new Vector3(
-            -Mathf.Cos(particleData.angle_rad[1]) * Mathf.Sin(particleData.angle_rad[0]),
-            Mathf.Sin(particleData.angle_rad[1]),
-            Mathf.Cos(particleData.angle_rad[1]) * Mathf.Cos(particleData.angle_rad[0])
-        ).normalized;
-
-        particles.Add(particle);
-        finalPositions.Add(ip);
-        directions.Add(direction);
-    }
-
     public IEnumerator LoadJSONFile(bool chaseCompanion = true)
     {
         loadingEvent = true;
@@ -493,7 +345,7 @@ public class EventLoader : MonoBehaviour
             yield break;
         }
 
-        if (String.Equals(headerVersion, targetVersion) || compatibleVersions.Contains(headerVersion))
+        if (VersionCheck.IsCompatible(headerVersion, targetVersion, compatibleVersions))
         {
             errorText.text = "Loading events: 0% complete";
             ParseHeader(eventDataWrapper, chaseCompanion);
@@ -505,7 +357,10 @@ public class EventLoader : MonoBehaviour
             {
                 foreach (Particle particleData in eventDataWrapper.header.particles)
                 {
-                    CreateParticle(particleData, scale);
+                    var (particle, finalPosition, direction) = EventGeometry.CreateParticle(particleData, totScale, EventGeometry.MakeMaterial);
+                    particles.Add(particle);
+                    finalPositions.Add(finalPosition);
+                    directions.Add(direction);
                 }
             }
 
@@ -525,35 +380,35 @@ public class EventLoader : MonoBehaviour
                 try
                 {
                     ParseEnergyScale(eventDataWrapper.events[i].event_data, i);
-                    (hitObjects[i], hitTime[i]) = CreateHitObjects(eventDataWrapper.events[i].hits);
+                    (hitObjects[i], hitTime[i]) = EventGeometry.CreateHitObjects(eventDataWrapper.events[i].hits, totScale, EventGeometry.MakeMaterial);
                 }
                 catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 yield return null;
 
                 if (eventOk)
                 {
-                    try { (blockObjects[i], blockTime[i]) = CreateBlockObjects(eventDataWrapper.events[i].blocks); }
+                    try { (blockObjects[i], blockTime[i]) = EventGeometry.CreateBlockObjects(eventDataWrapper.events[i].blocks, totScale, EventGeometry.MakeMaterial); }
                     catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 }
                 yield return null;
 
                 if (eventOk)
                 {
-                    try { (clusterObjects[i], clusterTime[i]) = CreateClusterObjects(eventDataWrapper.events[i].clusters); }
+                    try { (clusterObjects[i], clusterTime[i]) = EventGeometry.CreateClusterObjects(eventDataWrapper.events[i].clusters, totScale, EventGeometry.MakeMaterial); }
                     catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 }
                 yield return null;
 
                 if (eventOk)
                 {
-                    try { (jetObjects[i], jetTime[i]) = CreateJetObjects(eventDataWrapper.events[i].jets); }
+                    try { (jetObjects[i], jetTime[i]) = EventGeometry.CreateJetObjects(eventDataWrapper.events[i].jets, totScale, EventGeometry.MakeMaterial); }
                     catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 }
                 yield return null;
 
                 if (eventOk)
                 {
-                    try { (trackObjects[i], trackTime[i]) = CreateTrackObjects(eventDataWrapper.events[i].tracks); }
+                    try { (trackObjects[i], trackTime[i]) = EventGeometry.CreateTrackObjects(eventDataWrapper.events[i].tracks, units, scale, trackerGeometry, trackSegmentLength, headerBField, bFieldDirection, eScale); }
                     catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 }
                 yield return null;
@@ -591,7 +446,7 @@ public class EventLoader : MonoBehaviour
 
     private void ParseHeader(EventDataWrapper eventDataWrapper, bool chaseCompanion = true)
     {
-        headerExperiment = eventDataWrapper.header.experiment;
+        headerExperiment = LegacyField.Resolve(eventDataWrapper.header.title, eventDataWrapper.header.experiment);
         headerBField = eventDataWrapper.header.tracker_settings.B_field_T;
 
 
@@ -599,33 +454,12 @@ public class EventLoader : MonoBehaviour
         color_bar = eventDataWrapper.header.color_bar.ToLowerInvariant();
         scale = eventDataWrapper.header.scale;
         string unit = eventDataWrapper.header.length_unit.ToLowerInvariant();
-        units = unit switch
-        {
-            "m" => 1.0f,
-            "cm" => 0.01f,
-            "mm" => 0.001f,
-            _ => 1.0f,
-        };
+        units = EventHeaderMath.LengthUnitToScale(unit);
         totScale = scale * units;
         trackerGeometry = eventDataWrapper.header.tracker_settings.tracker_boundary;
         trackSegmentLength = eventDataWrapper.header.tracker_settings.segment_ns;
-        Vector3 bDir = new Vector3(
-            eventDataWrapper.header.tracker_settings.B_field_direction[0],
-            eventDataWrapper.header.tracker_settings.B_field_direction[1],
-            eventDataWrapper.header.tracker_settings.B_field_direction[2]
-        );
-        bFieldDirection = bDir.sqrMagnitude > 0f ? bDir.normalized : Vector3.forward;
-        eScale = energy_unit.ToLowerInvariant() switch
-        {
-            "ev" => Math.Pow(10, 0),
-            "kev" => Math.Pow(10, 3),
-            "mev" => Math.Pow(10, 6),
-            "gev" => Math.Pow(10, 9),
-            "tev" => Math.Pow(10, 12),
-            "pev" => Math.Pow(10, 15),
-            "eev" => Math.Pow(10, 18),
-            _ => Math.Pow(10, 9),
-        };
+        bFieldDirection = EventHeaderMath.NormalizeBField(eventDataWrapper.header.tracker_settings.B_field_direction);
+        eScale = EventHeaderMath.EnergyUnitToScale(energy_unit.ToLowerInvariant());
 
         // A tour manages its own model (tour header.model_file) and timing
         // (per-scene event_settings.time_before/speed) -- both take
@@ -729,432 +563,6 @@ public class EventLoader : MonoBehaviour
         }
 
         infoTexts[index] = eventData.info_text;
-    }
-
-    private Material MakeMaterial(float[] color_rgba)
-    {
-        Material material = new Material(Shader.Find("Transparent/Diffuse"))
-        {
-            color = new Color(
-                    color_rgba[0],
-                    color_rgba[1],
-                    color_rgba[2],
-                    color_rgba[3]
-                )
-        };
-        material.SetFloat("_Mode", 3);
-        material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
-        material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        material.SetInt("_ZWrite", 0);
-        material.DisableKeyword("_ALPHATEST_ON");
-        material.DisableKeyword("_ALPHABLEND_ON");
-        material.EnableKeyword("_ALPHAPREMULTIPLY_ON");
-        return material;
-    }
-
-    private (GameObject[], float[]) CreateHitObjects(List<Hits> hits)
-    {
-        // JsonUtility leaves this null (not an empty list) when the JSON
-        // simply omits the "hits" key for an event, which is a normal way
-        // for an event file to say "no hits this event" -- treat it the
-        // same as an empty array instead of throwing.
-        hits ??= new List<Hits>();
-
-        int hitSize = hits.Count;
-        GameObject[] eventHitObjects = new GameObject[hitSize];
-        float[] timeData = new float[hitSize];
-
-        for (int j = 0; j < hitSize; j++)
-        {
-            Hits JsonHitObject = hits[j];
-            timeData[j] = JsonHitObject.time_ns;
-            GameObject hitObject = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            hitObject.transform.position = new Vector3(
-                -1f * JsonHitObject.position[0] * totScale,
-                JsonHitObject.position[1] * totScale,
-                JsonHitObject.position[2] * totScale
-            );
-            hitObject.transform.localScale = new Vector3(
-                JsonHitObject.size * totScale,
-                JsonHitObject.size * totScale,
-                JsonHitObject.size * totScale
-            );
-            hitObject.GetComponent<Collider>().enabled = false;
-            hitObject.GetComponent<Renderer>().enabled = false;
-
-            Material material = MakeMaterial(JsonHitObject.color_rgba);
-
-            hitObject.GetComponent<MeshRenderer>().sharedMaterial = material;
-            eventHitObjects[j] = hitObject;
-        }
-
-        return (eventHitObjects, timeData);
-    }
-
-    private (GameObject[], float[]) CreateBlockObjects(List<Blocks> blocks)
-    {
-
-        blocks ??= new List<Blocks>();
-
-        int blockSize = blocks.Count;
-
-        GameObject[] eventBlockObjects = new GameObject[blockSize];
-        Blocks JsonBlockObject = new Blocks();
-        float[] blockTimeData = new float[blockSize];
-        for (int j = 0; j < blockSize; j++)
-        {
-            JsonBlockObject = blocks[j];
-
-            blockTimeData[j] = JsonBlockObject.time_ns;
-
-            eventBlockObjects[j] = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            eventBlockObjects[j].transform.position = new Vector3(-1f * JsonBlockObject.position[0] * totScale, JsonBlockObject.position[1] * totScale, JsonBlockObject.position[2] * totScale);
-            eventBlockObjects[j].transform.localScale = new Vector3(JsonBlockObject.size[0] * totScale, JsonBlockObject.size[1] * totScale, JsonBlockObject.size[2] * totScale);
-            eventBlockObjects[j].transform.eulerAngles = new Vector3(JsonBlockObject.euler_angles_deg[0], -JsonBlockObject.euler_angles_deg[1], JsonBlockObject.euler_angles_deg[2]);
-            eventBlockObjects[j].GetComponent<Collider>().enabled = false;
-            eventBlockObjects[j].GetComponent<Renderer>().enabled = false;
-
-            Material material = MakeMaterial(JsonBlockObject.color_rgba);
-
-            material.renderQueue = -1;
-            eventBlockObjects[j].GetComponent<MeshRenderer>().sharedMaterial = material;
-
-        }
-        return (eventBlockObjects, blockTimeData);
-    }
-
-    private (GameObject[], float[]) CreateClusterObjects(List<Clusters> clusters)
-    {
-        clusters ??= new List<Clusters>();
-        int clusterSize = clusters.Count;
-
-        GameObject[] eventClusterObjects = new GameObject[clusterSize];
-        Clusters JsonClusterObject = new Clusters();
-        float[] clusterTimeData = new float[clusterSize];
-        for (int j = 0; j < clusterSize; j++)
-        {
-            JsonClusterObject = clusters[j];
-
-            clusterTimeData[j] = JsonClusterObject.time_ns;
-
-            // Get the cluster's coordinates and size
-            float x = -1f * JsonClusterObject.position[0] * totScale;
-            float y = JsonClusterObject.position[1] * totScale;
-            float z = JsonClusterObject.position[2] * totScale;
-            float granularity = JsonClusterObject.granularity * totScale;
-            float length = JsonClusterObject.length * totScale;
-
-            eventClusterObjects[j] = GameObject.CreatePrimitive(PrimitiveType.Cube);
-
-            // Determine the direction vector
-            Vector3 direction = new Vector3(x, y, z).normalized;
-
-
-            // Position the bar so one end is at the designated coordinates (x, y, z)
-
-            Vector3 position = new Vector3(x, y, z) + direction * (length / 2f);
-            eventClusterObjects[j].transform.position = position;
-
-            // Scale the cube (make sure its length corresponds to the 'length' value, and its width to 'granularity')
-            eventClusterObjects[j].transform.localScale = new Vector3(granularity, granularity, length);
-
-            // Rotate the cube to face away from the origin (point along the direction vector)
-            eventClusterObjects[j].transform.rotation = Quaternion.LookRotation(direction);
-
-
-            eventClusterObjects[j].GetComponent<Collider>().enabled = false;
-            eventClusterObjects[j].GetComponent<Renderer>().enabled = false;
-
-            Material material = MakeMaterial(JsonClusterObject.color_rgba);
-
-            eventClusterObjects[j].GetComponent<MeshRenderer>().sharedMaterial = material;
-        }
-        return (eventClusterObjects, clusterTimeData);
-    }
-
-    private (GameObject[], float[]) CreateJetObjects(List<Jets> jets)
-    {
-        jets ??= new List<Jets>();
-        int jetSize = jets.Count;
-
-        GameObject[] eventJetObjects = new GameObject[jetSize];
-        Jets JsonJetObject = new Jets();
-        float[] jetTimeData = new float[jetSize];
-        for (int j = 0; j < jetSize; j++)
-        {
-            JsonJetObject = jets[j];
-            jetTimeData[j] = JsonJetObject.time_ns;
-
-            float x = -1 * JsonJetObject.vertex[0] * totScale;
-            float y = JsonJetObject.vertex[1] * totScale;
-            float z = JsonJetObject.vertex[2] * totScale;
-            float length = JsonJetObject.length * totScale;
-            float theta = JsonJetObject.angle_rad[0];
-            float phi = JsonJetObject.angle_rad[1];
-            float radius = length * Mathf.Tan(JsonJetObject.R_rad / 2f);
-
-
-
-            Vector3 direction = new Vector3(
-            -1 * Mathf.Sin(theta) * Mathf.Cos(phi),
-            Mathf.Sin(theta) * Mathf.Sin(phi),
-            Mathf.Cos(theta)
-            ).normalized;
-
-
-            eventJetObjects[j] = new GameObject();
-            Mesh coneMesh = CreateConeMesh(radius, length);
-            MeshFilter meshFilter = eventJetObjects[j].AddComponent<MeshFilter>();
-            meshFilter.mesh = coneMesh;
-
-            MeshRenderer renderer = eventJetObjects[j].AddComponent<MeshRenderer>();
-
-            Material material = MakeMaterial(JsonJetObject.color_rgba);
-
-            renderer.material = material;
-
-            eventJetObjects[j].transform.position = new Vector3(x, y, z);
-            eventJetObjects[j].transform.rotation = Quaternion.LookRotation(direction) * Quaternion.Euler(90, 0, 0);  // Rotate 90 degrees around the X axis
-
-
-            eventJetObjects[j].GetComponent<Renderer>().enabled = false;
-        }
-
-        return (eventJetObjects, jetTimeData);
-    }
-    private (List<GameObject>, List<float>) CreateTrackObjects(List<Tracks> tracks)
-    {
-        tracks ??= new List<Tracks>();
-        int trackSize = tracks.Count;
-
-        List<GameObject> eventTracks = new List<GameObject>();
-        List<float> eventTrackTimes = new List<float>();
-
-        // Tracker boundaries in detector coordinates (no display scaling)
-        float trackerR = trackerGeometry[0] * units;
-        float trackerZn = trackerGeometry[1] * units;
-        float trackerZp = trackerGeometry[2] * units;
-        
-        for (int j = 0; j < trackSize; j++)
-        {
-            Tracks JsonTrackObject = tracks[j];
-
-            Color color = new Color(
-                JsonTrackObject.color_rgba[0],
-                JsonTrackObject.color_rgba[1],
-                JsonTrackObject.color_rgba[2],
-                JsonTrackObject.color_rgba[3]
-            );
-
-            int q = JsonTrackObject.qOverP < 0 ? -1 : (JsonTrackObject.qOverP > 0 ? 1 : 0);
-
-            float p = 1f;
-            double cm = 2.998 * Math.Pow(10, 8);
-            if (JsonTrackObject.qOverP != 0)
-            {
-                p = (float)(eScale / (cm * Math.Abs(JsonTrackObject.qOverP)));
-            }
-
-            float theta = (float)JsonTrackObject.angle_rad[0];
-            float phi = (float)JsonTrackObject.angle_rad[1];
-
-            float px = -p * Mathf.Sin(theta) * Mathf.Cos(phi);
-            float py = p * Mathf.Sin(theta) * Mathf.Sin(phi);
-            float pz = p * Mathf.Cos(theta);
-
-            // Vertex in detector coordinates
-            float xo = -JsonTrackObject.vertex[0] * units;
-            float yo = JsonTrackObject.vertex[1] * units;
-            float zo = JsonTrackObject.vertex[2] * units;
-
-            float B = headerBField;
-
-            float startTime = JsonTrackObject.duration_ns[0];
-            float endTime = JsonTrackObject.duration_ns[1];
-
-            float c = 0.299792f;  // m/ns
-
-            Vector3 momentum = new Vector3(px, py, pz);
-            float P = momentum.magnitude;
-
-            if (q == 0 || B == 0)
-            {
-                Vector3 direction = momentum.normalized;
-
-                float vx = direction.x * c;
-                float vy = direction.y * c;
-                float vz = direction.z * c;
-
-                for (float t = 0; t <= endTime; t += trackSegmentLength)
-                {
-                    Vector3 startPosition = new Vector3(
-                        vx * t + xo,
-                        vy * t + yo,
-                        vz * t + zo
-                    );
-
-                    Vector3 endPosition = new Vector3(
-                        vx * (t + trackSegmentLength) + xo,
-                        vy * (t + trackSegmentLength) + yo,
-                        vz * (t + trackSegmentLength) + zo
-                    );
-
-                    float posR = Mathf.Sqrt(endPosition.x * endPosition.x + endPosition.y * endPosition.y);
-
-                    if (endPosition.z < trackerZn || endPosition.z > trackerZp || posR > trackerR)
-                    {
-                        break;
-                    }
-
-                    eventTrackTimes.Add(t + trackSegmentLength + startTime);
-
-                    GameObject segment = new GameObject();
-                    LineRenderer lineRenderer = segment.AddComponent<LineRenderer>();
-                    lineRenderer.positionCount = 2;
-
-                    // Apply display scale only at rendering
-                    lineRenderer.SetPosition(0, startPosition * scale);
-                    lineRenderer.SetPosition(1, endPosition * scale);
-
-                    lineRenderer.startWidth = 0.04f;
-                    lineRenderer.endWidth = 0.04f;
-                    lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-                    lineRenderer.startColor = color;
-                    lineRenderer.endColor = color;
-
-                    segment.GetComponent<Renderer>().enabled = false;
-                    eventTracks.Add(segment);
-                }
-            }
-            else
-            {
-                // px is reconstructed above with a sign flip relative to py/pz
-                // (px = -p sin(theta) cos(phi)) -- a long-standing convention,
-                // shared with vertex positions (xo = -vertex.x), for the
-                // right-handed-to-Unity-left-handed display flip. For straight
-                // tracks that's a harmless pure reflection, but the Lorentz
-                // force dv/dt = (q/m)(v x B) is only symmetric under an
-                // X-only reflection of v if B is reflected too -- as a
-                // pseudovector, i.e. with its Y and Z components negated
-                // instead of X (verified: this is the unique field transform
-                // that keeps R_x(v) x B' = R_x(v x B) an identity for all
-                // v, B). Without this correction, curvature around any field
-                // with a Y or Z component doesn't correctly correspond to the
-                // momentum/field the caller specified.
-                Vector3 bFieldEffective = new Vector3(bFieldDirection.x, -bFieldDirection.y, -bFieldDirection.z);
-
-                // Build a right-handed orthonormal basis {e1, e2, bFieldEffective}
-                // spanning the plane perpendicular to the field (e1 x e2 =
-                // bFieldEffective). For the default bFieldDirection = +Z this
-                // reduces to e1 = -X, e2 = +Y.
-                Vector3 e1 = Vector3.Cross(Vector3.up, bFieldEffective);
-                if (e1.sqrMagnitude < 1e-6f)
-                {
-                    e1 = Vector3.Cross(Vector3.right, bFieldEffective);
-                }
-                e1 = e1.normalized;
-                Vector3 e2 = Vector3.Cross(bFieldEffective, e1);
-
-                float omega = (q * B / P) * c;
-                float vPar = c * Vector3.Dot(momentum, bFieldEffective) / P;
-                float a0 = c * Vector3.Dot(momentum, e1) / P;
-                float b0 = c * Vector3.Dot(momentum, e2) / P;
-
-                Vector3 vertexPos = new Vector3(xo, yo, zo);
-
-                Vector3 HelixPosition(float ht)
-                {
-                    float e1Coeff = (a0 * Mathf.Sin(omega * ht) + b0 * (1f - Mathf.Cos(omega * ht))) / omega;
-                    float e2Coeff = (a0 * (Mathf.Cos(omega * ht) - 1f) + b0 * Mathf.Sin(omega * ht)) / omega;
-                    return vertexPos + e1Coeff * e1 + e2Coeff * e2 + vPar * ht * bFieldEffective;
-                }
-
-                for (float t = 0; t <= endTime; t += trackSegmentLength)
-                {
-                    Vector3 startPosition = HelixPosition(t);
-                    Vector3 endPosition = HelixPosition(t + trackSegmentLength);
-
-                    float posR = Mathf.Sqrt(endPosition.x * endPosition.x + endPosition.y * endPosition.y);
-
-                    if (endPosition.z < trackerZn || endPosition.z > trackerZp || posR > trackerR)
-                    {
-                        break;
-                    }
-
-                    eventTrackTimes.Add(t + trackSegmentLength + startTime);
-
-                    GameObject segment = new GameObject();
-                    LineRenderer lineRenderer = segment.AddComponent<LineRenderer>();
-                    lineRenderer.positionCount = 2;
-                    
-                    lineRenderer.SetPosition(0, startPosition * scale);
-                    lineRenderer.SetPosition(1, endPosition * scale);
-
-                    lineRenderer.startWidth = 0.04f;
-                    lineRenderer.endWidth = 0.04f;
-                    lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-                    lineRenderer.startColor = color;
-                    lineRenderer.endColor = color;
-
-                    segment.GetComponent<Renderer>().enabled = false;
-                    eventTracks.Add(segment);
-                }
-            }
-        }
-
-        return (eventTracks, eventTrackTimes);
-    }
-
-
-
-
-    Mesh CreateConeMesh(float radius, float height)
-    {
-        Mesh mesh = new Mesh();
-
-        int segments = 20; // Number of segments for the base circle
-        int verticesCount = segments + 2; // Tip + base vertices + center of the base
-        Vector3[] vertices = new Vector3[verticesCount];
-        int[] triangles = new int[segments * 3 * 2]; // Two sets of triangles (side + base)
-
-        // Tip of the cone (vertex at the origin)
-        vertices[0] = new Vector3(0, 0, 0);
-
-        // Base circle vertices (at height along the positive Y axis)
-        for (int i = 0; i < segments; i++)
-        {
-            float angle = 2 * Mathf.PI * i / segments;
-            float x = Mathf.Cos(angle) * radius;
-            float z = Mathf.Sin(angle) * radius;
-            vertices[i + 1] = new Vector3(x, height, z); // Move base vertices up by 'height' on the Y axis
-        }
-
-        // Center of the base
-        vertices[verticesCount - 1] = new Vector3(0, height, 0);
-
-        // Side triangles (connecting the tip to the base)
-        for (int i = 0; i < segments; i++)
-        {
-            triangles[i * 3] = 0; // Tip of the cone
-            triangles[i * 3 + 1] = (i == segments - 1) ? 1 : i + 2; // Next base vertex (wrap around at the end)
-            triangles[i * 3 + 2] = i + 1; // Current base vertex
-        }
-
-        // Base triangles (to close the bottom)
-        for (int i = 0; i < segments; i++)
-        {
-            int baseIndex = segments * 3 + i * 3;
-            triangles[baseIndex] = verticesCount - 1; // Center of the base
-            triangles[baseIndex + 1] = i + 1; // Current base vertex
-            triangles[baseIndex + 2] = (i == segments - 1) ? 1 : i + 2; // Next base vertex (wrap around)
-        }
-
-        // Assign vertices and triangles to the mesh
-        mesh.vertices = vertices;
-        mesh.triangles = triangles;
-        mesh.RecalculateNormals();
-
-        return mesh;
     }
 
     // Update is called once per frame
@@ -1387,7 +795,7 @@ public class EventLoader : MonoBehaviour
             }
 
             if (animating == false)
-            {             
+            {
                 LoadHits();
             }
             else
@@ -1498,7 +906,7 @@ public class EventLoader : MonoBehaviour
 
     void LoadFilesIntoDropdown()
     {
- 
+
         string path = Path.Combine(UnityEngine.Application.streamingAssetsPath, "Events");
 
         if (!Directory.Exists(path))
@@ -1507,7 +915,7 @@ public class EventLoader : MonoBehaviour
             return;
         }
 
-        // Get all .json files 
+        // Get all .json files
         string[] files = Directory.GetFiles(path, "*.json");
 
         // Clear existing options and populate new ones

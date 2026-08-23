@@ -8,7 +8,6 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using TMPro;
 using static System.Net.Mime.MediaTypeNames;
-using static ComponentMaker;
 using System.Linq;
 using TriLibCore;
 using TriLibCore.General;
@@ -17,58 +16,13 @@ using TriLibCore.Utils;
 using UnityEngine.Networking;
 using NativeFilePickerNamespace;
 using UnityEngine.Android;
+using VirtueCore.Models;
+using VirtueCore.Tours;
+using VirtueCore.Shared;
 #pragma warning disable 0618
 
 public class ComponentMaker : MonoBehaviour
 {
-    [System.Serializable]
-    public class ComponentListWrapper
-    {
-        public Header header;
-        public Components[] components;
-    }
-
-    [System.Serializable]
-    public class Header
-    {
-        public string version;
-        public string detector;
-        public string length_unit = "m";
-        public float scale = 1.0f;
-        // Optional: event file (StreamingAssets/Events) to auto-load alongside
-        // this model file, mirroring EventLoader's header.model_file. Only
-        // followed on a direct/manual model load -- if this model was itself
-        // auto-loaded via an event file's header.model_file, we don't chase
-        // this back, so the event file the user actually selected always
-        // takes precedence and the two headers can't loop off each other.
-        public string event_file = "";
-    }
-
-
-    [System.Serializable]
-    public class Components
-    {
-        public string type;
-        public int index = -1;
-        public string name = "";
-        public int sides;
-        public float[] position = new float[] { 0f, 0f, 0f };
-        public Radii radii;
-        public float[] length = new float[] { -1f, -1f };
-        public float inner_offset = 0f;
-        public float[] euler_angles_deg = new float[] { 0f, 0f, 0f };
-
-        public float[] size = new float[] { 1f, 1f, 1f };
-
-        public float[] color_rgba = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
-    }
-    [System.Serializable]
-    public class Radii
-    {
-        public float[] left = new float[] { -1f, -1f };  // Array for left side radii [rmin1, rmax1]
-        public float[] right = new float[] { -1f, -1f }; // Array for right side radii [rmin2, rmax2]
-    }
-
     private bool menagerieActive = false;
     public UnityEngine.UI.Text errorText;
 
@@ -84,11 +38,11 @@ public class ComponentMaker : MonoBehaviour
     private float scale = 1.0f;
     private float lineThickness = 0.01f;
     public UnityEngine.UI.Text detectorText;
-    private string targetVersion = "3.2.0";
-    // Intentionally empty: 3.2.0 is the only accepted model file version, since
-    // the toroid format change in the Components schema means older-format
-    // model files are no longer guaranteed compatible.
-    private List<string> compatibleVersions = new List<string>();
+    private string targetVersion = "3.2.1";
+    // 3.2.0 model files remain compatible: the only change since then is the
+    // header field rename (detector -> title), which this parser already
+    // accepts via the legacy detector alias above.
+    private List<string> compatibleVersions = new List<string> { "3.2.0" };
     private List<string> fileNames = new List<string>();
     private List<string> displayNames = new List<string>();
     public TMP_Dropdown fileDropdown;
@@ -100,6 +54,13 @@ public class ComponentMaker : MonoBehaviour
     public UnityEngine.UI.Text wireText;
     public UnityEngine.UI.Text nameText;
     public bool loadingModel = false;
+    // Bumped every time a new load starts (ResetModelState, called by both
+    // BuildSimModel and LoadFBXModel). Captured by the async FBX callbacks
+    // below so a load that gets superseded by a newer selection -- from
+    // either the dropdown or another file-picker pick -- can tell it's
+    // stale and discard its results instead of clobbering whatever the
+    // newer selection already built.
+    private int modelLoadToken = 0;
     public GameObject figures;
     public UnityEngine.UI.Text figureText;
     List<int> jsonFileIndexes = new List<int>();
@@ -351,7 +312,7 @@ public class ComponentMaker : MonoBehaviour
                 {
                     // Handle JSON file
                     StartCoroutine(LoadJsonFileFromPath(path));
-                    
+
                 }
                 else if (extension == ".fbx")
                 {
@@ -419,11 +380,19 @@ public class ComponentMaker : MonoBehaviour
     private void LoadFBXModel(string filepath)
     {
         ResetModelState();
+        int myToken = modelLoadToken;
         var assetLoaderOptions = AssetLoader.CreateDefaultLoaderOptions();
         assetLoaderOptions.UseUnityNativeNormalCalculator = true;
         assetLoaderOptions.AlphaMaterialMode = AlphaMaterialMode.Transparent;
 
-        AssetLoader.LoadModelFromFile(filepath, OnLoad, OnMaterialsLoad, OnProgress, OnError, null, assetLoaderOptions);
+        AssetLoader.LoadModelFromFile(
+            filepath,
+            (context) => OnLoad(context, myToken),
+            (context) => OnMaterialsLoad(context, myToken),
+            (context, progress) => OnProgress(context, progress, myToken),
+            (error) => OnError(error, myToken),
+            null,
+            assetLoaderOptions);
     }
 
 
@@ -433,8 +402,10 @@ public class ComponentMaker : MonoBehaviour
     }
 
 
-    private void OnProgress(AssetLoaderContext assetLoaderContext, float progress)
+    private void OnProgress(AssetLoaderContext assetLoaderContext, float progress, int token)
     {
+        if (token != modelLoadToken) return;
+
         if (progress < 1f)
         {
             // Display the loading progress rounded to the nearest integer
@@ -454,13 +425,24 @@ public class ComponentMaker : MonoBehaviour
     }
 
 
-    private void OnError(IContextualizedError contextualizedError)
+    private void OnError(IContextualizedError contextualizedError, int token)
     {
+        if (token != modelLoadToken) return;
         errorText.text = $"Error: {contextualizedError.ToString()}";
     }
 
-    private void OnLoad(AssetLoaderContext assetLoaderContext)
+    private void OnLoad(AssetLoaderContext assetLoaderContext, int token)
     {
+        if (token != modelLoadToken)
+        {
+            // A newer model selection has since started -- this load was
+            // effectively aborted. Discard what it built instead of adding
+            // it on top of whatever superseded it.
+            if (assetLoaderContext.RootGameObject != null)
+                Destroy(assetLoaderContext.RootGameObject);
+            return;
+        }
+
         explodeSlider.value = 1f;
         var myLoadedGameObject = assetLoaderContext.RootGameObject;
         TagNthLevelChildren(myLoadedGameObject, "Detector", 2);
@@ -471,8 +453,10 @@ public class ComponentMaker : MonoBehaviour
         loadingModel = false;
     }
 
-    private void OnMaterialsLoad(AssetLoaderContext assetLoaderContext)
+    private void OnMaterialsLoad(AssetLoaderContext assetLoaderContext, int token)
     {
+        if (token != modelLoadToken) return;
+
         var myLoadedGameObject = assetLoaderContext.RootGameObject;
         myLoadedGameObject.SetActive(true);
         myLoadedGameObject.tag = "Detector";
@@ -562,7 +546,7 @@ public class ComponentMaker : MonoBehaviour
     private void LoadFile(bool chaseCompanion)
     {
 
-        if (!String.Equals(filename, lastFilename) && loadingModel == false)
+        if (!String.Equals(filename, lastFilename))
         {
             explodeSlider.value = 1f;
             lastSliderValue = 1f;
@@ -597,6 +581,9 @@ public class ComponentMaker : MonoBehaviour
     public void ResetModelState()
     {
         loadingModel = true;
+        // See modelLoadToken's declaration -- invalidates any FBX load
+        // still in flight from a previous selection.
+        modelLoadToken++;
         wireText.text = "Show Wireframe";
         wireOn = false;
 
@@ -707,10 +694,10 @@ public class ComponentMaker : MonoBehaviour
 
             string version = componentListWrapper.header.version;
 
-            if (string.Equals(version, targetVersion) || compatibleVersions.Contains(version))
+            if (VersionCheck.IsCompatible(version, targetVersion, compatibleVersions))
             {
                 string unit = componentListWrapper.header.length_unit;
-                detectorText.text = componentListWrapper.header.detector;
+                detectorText.text = LegacyField.Resolve(componentListWrapper.header.title, componentListWrapper.header.detector);
 
                 if (string.Equals(unit, "m"))
                 {
@@ -731,56 +718,16 @@ public class ComponentMaker : MonoBehaviour
                     eventLoader.LoadEventFile(componentListWrapper.header.event_file);
                 }
 
-                int detCount = 0;
                 var sortedComponents = componentListWrapper.components
                         .OrderBy(c => c.index == -1 ? int.MaxValue : c.index)
                         .ToList();
-                foreach (var data in sortedComponents)
-                {
-                    string name = data.name;
-                    int index = data.index;
-                    
-                    if (index == -1)
-                    {
-                        index = detCount;
-                    }
-                    float[] position = data.position;
-                    float[] eulerAngle = data.euler_angles_deg;
-                    float[] rgba = data.color_rgba;
-                    string typeLower = data.type.ToLowerInvariant();
 
-                    if (typeLower.Contains("t"))
-                    {
-                        int sides = data.sides;
+                ComponentsBuildResult buildResult = ModelGeometry.BuildComponents(sortedComponents, scale, lineThickness, collidersOn);
+                detectorParts.AddRange(buildResult.DetectorParts);
+                lineObjects.AddRange(buildResult.LineObjects);
+                nameTagObjects.AddRange(buildResult.NameTagObjects);
+                pivots.AddRange(buildResult.Pivots);
 
-                        float[] rLeft = data.radii.left;
-                        float[] rRight = data.radii.right;
-                        float[] length = data.length;
-
-                        if (rLeft[0] == -1) rLeft = rRight;
-                        else if (rRight[0] == -1) rRight = rLeft;
-
-                        if (length[0] == -1) length[0] = length[1];
-                        else if (length[1] == -1) length[1] = length[0];
-
-                        float offsetIn = data.inner_offset;
-                        
-                        MakeToroid(name, sides, position, rLeft, rRight, length, offsetIn, eulerAngle, rgba, componentListWrapper.components.Length - index);
-                        detCount++;
-                    }
-                    else if (typeLower.Contains("b"))
-                    {
-                        float[] size = data.size;
-                        MakeBlock(name, position, size, eulerAngle, rgba, componentListWrapper.components.Length - index, true);
-                        detCount++;
-                    }
-                    else if (typeLower.Contains("s"))
-                    {
-                        float[] size = data.size;
-                        MakeSpheroid(name, position, size, eulerAngle, rgba, componentListWrapper.components.Length - index);
-                        detCount++;
-                    }
-                }
                 detectorPartAlphas.Clear();
 
                 foreach (var go in detectorParts)
@@ -870,7 +817,7 @@ public class ComponentMaker : MonoBehaviour
             jsonFileIndexes.Add(displayNames.Count - 1); // Track JSON file index
         }
 
-        
+
 
         fileDropdown.AddOptions(displayNames);
     }
@@ -922,579 +869,6 @@ public class ComponentMaker : MonoBehaviour
             nameText.text = "Hide Nametags";
         }
         tagsActive = !tagsActive;
-    }
-
-    void MakeBlock(String name, float[] position, float[] size, float[] eulerAngle, float[] rgba, int renderQueue, bool isReal)
-    {
-        // Create a new GameObject for the prism
-        GameObject prism = new GameObject("Detector Piece", typeof(MeshFilter), typeof(MeshRenderer));
-        prism.tag = "Detector";
-
-        // Create the mesh
-        Mesh mesh = new Mesh();
-
-        // Set up vertices based on size array
-        Vector3[] vertices = new Vector3[8]
-        {
-        new Vector3(-scale*size[0] / 2, -scale*size[1] / 2, -scale*size[2] / 2),
-        new Vector3(scale*size[0] / 2, -scale*size[1] / 2, -scale*size[2] / 2),
-        new Vector3(scale*size[0] / 2, scale*size[1] / 2, -scale*size[2] / 2),
-        new Vector3(-scale*size[0] / 2, scale*size[1] / 2, -scale*size[2] / 2),
-        new Vector3(-scale*size[0] / 2, -scale*size[1] / 2, scale*size[2] / 2),
-        new Vector3(scale*size[0] / 2, -scale*size[1] / 2, scale*size[2] / 2),
-        new Vector3(scale*size[0] / 2, scale*size[1] / 2, scale*size[2] / 2),
-        new Vector3(-scale*size[0] / 2, scale*size[1] / 2, scale*size[2] / 2)
-        };
-
-        // Define triangles
-        int[] triangles = new int[]
-        {
-        0, 2, 1, 0, 3, 2, // Back face
-        4, 5, 6, 4, 6, 7, // Front face
-        0, 1, 5, 0, 5, 4, // Bottom face
-        2, 3, 7, 2, 7, 6, // Top face
-        0, 4, 7, 0, 7, 3, // Left face
-        1, 2, 6, 1, 6, 5,  // Right face
-
-        2, 3, 0, 1, 2, 0, // Faces in reverse
-        7, 6, 4, 6, 5, 4,
-        4, 5, 0, 5, 1, 0,
-        6, 7, 2, 7, 3, 2,
-        3, 7, 0, 7, 4, 0,
-        5, 6, 1, 6, 2, 1
-        };
-
-        mesh.vertices = vertices;
-        mesh.triangles = triangles;
-
-        prism.GetComponent<MeshFilter>().mesh = mesh;
-        if (isReal)
-        {
-            MeshCollider meshCollider = prism.AddComponent<MeshCollider>();
-            meshCollider.enabled = collidersOn;
-        }
-
-
-        // Material and color setup
-        Material material = new Material(Shader.Find("Transparent/Diffuse"));
-
-        Color color = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
-
-        material.color = color;
-        material.renderQueue = renderQueue;
-
-        prism.GetComponent<MeshRenderer>().sharedMaterial = material;
-
-        // Create lines to outline the edges of the rectangular prism
-        GameObject[] lines = new GameObject[12];
-        int[,] edges = new int[12, 2]
-        {
-        {0, 1}, {1, 2}, {2, 3}, {3, 0}, // Back face
-        {4, 5}, {5, 6}, {6, 7}, {7, 4}, // Front face
-        {0, 4}, {1, 5}, {2, 6}, {3, 7}  // Connecting edges
-        };
-
-        Material lineMaterial = new Material(Shader.Find("Sprites/Default"));
-
-        if (isReal)
-        {
-            for (int i = 0; i < 12; i++)
-            {
-                lines[i] = new GameObject("Line");
-                LineRenderer lineRenderer = lines[i].AddComponent<LineRenderer>();
-                lineRenderer.positionCount = 2;
-                lineRenderer.useWorldSpace = false;
-
-                lineRenderer.startWidth = lineThickness;
-                lineRenderer.endWidth = lineThickness;
-
-                lineRenderer.SetPosition(0, vertices[edges[i, 0]]);
-                lineRenderer.SetPosition(1, vertices[edges[i, 1]]);
-
-                lineRenderer.material = lineMaterial;
-                lineRenderer.material.renderQueue = -1;
-
-                lines[i].transform.parent = prism.transform;
-                lines[i].transform.localPosition = Vector3.zero;
-                lines[i].SetActive(false);
-                lines[i].tag = "Line";
-                lineObjects.Add(lines[i]);
-            }
-        }
-
-        // Set orientation and position
-        prism.transform.eulerAngles = new Vector3(eulerAngle[0], -eulerAngle[1], eulerAngle[2]);
-        prism.transform.position = new Vector3(-scale * position[0], scale * position[1], scale * position[2]);
-        detectorParts.Add(prism);
-        if (!String.Equals(name, ""))
-        {
-            CreateNameTag(prism, name, eulerAngle, renderQueue);
-        }
-    }
-
-    public void MakeSpheroid(string name, float[] position, float[] size, float[] eulerAngle, float[] rgba, int renderQueue)
-    {
-        float[] clear = { 0, 0, 0, 0 };
-
-        // --- build hidden supporting block ---
-        MakeBlock(name, position, size, eulerAngle, clear, renderQueue, false);
-        GameObject hiddenBlock = detectorParts[detectorParts.Count - 1]; // last created object
-
-        // --- build visible spheroid ---
-        GameObject spheroid = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        spheroid.tag = "Detector";
-
-        // parent the hidden block under the sphere
-        hiddenBlock.transform.parent = spheroid.transform;
-        hiddenBlock.SetActive(false);
-
-        // remove hidden block from primary listing
-        detectorParts.Remove(hiddenBlock);
-
-        // material
-        Material material = new Material(Shader.Find("Transparent/Diffuse"));
-        material.color = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
-        material.renderQueue = renderQueue;
-        spheroid.GetComponent<Renderer>().material = material;
-
-        // wireframe circles
-        CreateCircle(spheroid, Vector3.right);
-        CreateCircle(spheroid, Vector3.up);
-        CreateCircle(spheroid, Vector3.forward);
-
-        // transform
-        spheroid.transform.localScale = new Vector3(scale * size[0], scale * size[1], scale * size[2]);
-        spheroid.transform.position = new Vector3(-scale * position[0], scale * position[1], scale * position[2]);
-        spheroid.transform.eulerAngles = new Vector3(eulerAngle[0], -eulerAngle[1], eulerAngle[2]);
-
-        MeshCollider meshCollider = spheroid.AddComponent<MeshCollider>();
-        meshCollider.enabled = collidersOn;
-        Destroy(spheroid.GetComponent<SphereCollider>());
-
-        // *** add only the spheroid as the tour-visible "component" ***
-        detectorParts.Add(spheroid);
-    }
-
-    void CreateCircle(GameObject parent, Vector3 axis)
-    {
-        int segments = 64;
-        float radius = 0.5f;
-        GameObject lineObj = new GameObject("Wireframe Circle");
-        LineRenderer lineRenderer = lineObj.AddComponent<LineRenderer>();
-
-        lineRenderer.positionCount = segments + 1;
-        lineRenderer.widthMultiplier = lineThickness;
-        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-
-        for (int i = 0; i <= segments; i++)
-        {
-            float angle = i * 2 * Mathf.PI / segments;
-            Vector3 point = new Vector3(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius, 0);
-            point = Quaternion.LookRotation(axis) * point;
-            lineRenderer.SetPosition(i, point);
-        }
-
-        lineObj.transform.parent = parent.transform;
-        lineObj.GetComponent<LineRenderer>().useWorldSpace = false;
-
-        lineObj.SetActive(false);
-        lineObjects.Add(lineObj);
-    }
-
-    void MakeToroid(String name, int sides, float[] position, float[] rLeft, float[] rRight, float[] length, float offsetIn, float[] eulerAngle, float[] rgba, int renderQueue)
-    {
-        float lengthIn = scale * length[0];
-        float lengthOut = scale * length[1];
-        offsetIn = scale * offsetIn;
-        float innerR = scale * rLeft[0];
-        float outerR = scale * rLeft[1];
-        float innerR2 = scale * rRight[0];
-        float outerR2 = scale * rRight[1];
-        float rotate = 0f;
-        rotate = (float)rotate * (180.0f / Mathf.PI);
-
-        if (sides % 2 == 0)
-        {
-            rotate = rotate + (360 / (sides * 2)) + 90;
-        }
-        else
-        {
-            rotate = rotate + 90;
-        }
-        Vector3[] vertices = new Vector3[sides * 4];
-        int[] triangles = new int[sides * 12 * 4];
-        GameObject[] lines = new GameObject[sides * 8];
-
-        int index = 0;
-        int lineIndex = 0;
-        for (int i = 0; i < sides; i++)
-        {
-            float angle = (360f / sides) * i + rotate;
-            double theta = Math.PI * angle / 180.0;
-            vertices[index] = new Vector3(outerR * (float)Math.Cos(theta), outerR * (float)Math.Sin(theta), (-lengthOut / 2));
-            index++;
-            vertices[index] = new Vector3(innerR * (float)Math.Cos(theta), innerR * (float)Math.Sin(theta), (-lengthIn / 2) + offsetIn);
-            index++;
-            vertices[index] = new Vector3(outerR2 * (float)Math.Cos(theta), outerR2 * (float)Math.Sin(theta), (lengthOut / 2));
-            index++;
-            vertices[index] = new Vector3(innerR2 * (float)Math.Cos(theta), innerR2 * (float)Math.Sin(theta), (lengthIn / 2) + offsetIn);
-            index++;
-
-
-            float angle2 = (360f / sides) * (i + 1) + rotate;
-            double theta2 = Math.PI * angle2 / 180.0;
-            Vector3 start;
-            Vector3 end;
-            LineRenderer lr = new LineRenderer();
-            Material whiteDiffuseMat = new Material(Shader.Find("Sprites/Default"));
-            for (float j = (-0.5f); j <= 0.5f; j++)
-            {
-
-                start = new Vector3(outerR * (float)Math.Cos(theta), outerR * (float)Math.Sin(theta), j * lengthOut);
-                end = new Vector3(outerR * (float)Math.Cos(theta2), outerR * (float)Math.Sin(theta2), j * lengthOut);
-                if (j > 0)
-                {
-                    start = new Vector3(outerR2 * (float)Math.Cos(theta), outerR2 * (float)Math.Sin(theta), j * lengthOut);
-                    end = new Vector3(outerR2 * (float)Math.Cos(theta2), outerR2 * (float)Math.Sin(theta2), j * lengthOut);
-                }
-                lines[lineIndex] = new GameObject();
-
-                lines[lineIndex].transform.position = start;
-                lines[lineIndex].AddComponent<LineRenderer>();
-                lr = lines[lineIndex].GetComponent<LineRenderer>();
-                lr.material = whiteDiffuseMat;
-                lr.material.renderQueue = -1;
-                lr.SetWidth(lineThickness, lineThickness);
-                lr.SetPosition(0, start);
-                lr.SetPosition(1, end);
-                lineIndex++;
-                if ((innerR != 0 && j < 0) ^ (innerR2 != 0 && j > 0))
-                {
-                    start = new Vector3(innerR * (float)Math.Cos(theta), innerR * (float)Math.Sin(theta), (j * lengthIn) + offsetIn);
-                    end = new Vector3(innerR * (float)Math.Cos(theta2), innerR * (float)Math.Sin(theta2), (j * lengthIn) + offsetIn);
-                    if (j > 0)
-                    {
-                        start = new Vector3(innerR2 * (float)Math.Cos(theta), innerR2 * (float)Math.Sin(theta), (j * lengthIn) + offsetIn);
-                        end = new Vector3(innerR2 * (float)Math.Cos(theta2), innerR2 * (float)Math.Sin(theta2), (j * lengthIn) + offsetIn);
-                    }
-                    lines[lineIndex] = new GameObject();
-
-                    lines[lineIndex].transform.position = start;
-                    lines[lineIndex].AddComponent<LineRenderer>();
-                    lr = lines[lineIndex].GetComponent<LineRenderer>();
-                    lr.material = whiteDiffuseMat;
-                    lr.material.renderQueue = -1;
-                    lr.SetWidth(lineThickness, lineThickness);
-                    lr.SetPosition(0, start);
-                    lr.SetPosition(1, end);
-                    lineIndex++;
-                    if (sides <= 1)
-                    {
-                        start = new Vector3(outerR * (float)Math.Cos(theta), outerR * (float)Math.Sin(theta), j * lengthOut);
-                        end = new Vector3(innerR * (float)Math.Cos(theta), innerR * (float)Math.Sin(theta), (j * lengthIn) + offsetIn);
-                        if (j > 0)
-                        {
-                            start = new Vector3(outerR2 * (float)Math.Cos(theta), outerR2 * (float)Math.Sin(theta), j * lengthOut);
-                            end = new Vector3(innerR2 * (float)Math.Cos(theta), innerR2 * (float)Math.Sin(theta), (j * lengthIn) + offsetIn);
-                        }
-                        lines[lineIndex] = new GameObject();
-
-                        lines[lineIndex].transform.position = start;
-                        lines[lineIndex].AddComponent<LineRenderer>();
-                        lr = lines[lineIndex].GetComponent<LineRenderer>();
-                        lr.material = whiteDiffuseMat;
-                        lr.material.renderQueue = -1;
-                        lr.SetWidth(lineThickness, lineThickness);
-                        lr.SetPosition(0, start);
-                        lr.SetPosition(1, end);
-                        lineIndex++;
-                    }
-
-                }
-
-            }
-            if (sides <= 0)
-            {
-                start = new Vector3(outerR * (float)Math.Cos(theta), outerR * (float)Math.Sin(theta), (-lengthOut / 2));
-                end = new Vector3(outerR2 * (float)Math.Cos(theta), outerR2 * (float)Math.Sin(theta), (lengthOut / 2));
-
-                lines[lineIndex] = new GameObject();
-
-                lines[lineIndex].transform.position = start;
-                lines[lineIndex].AddComponent<LineRenderer>();
-                lr = lines[lineIndex].GetComponent<LineRenderer>();
-                lr.material = whiteDiffuseMat;
-                lr.material.renderQueue = 100;
-                lr.SetWidth(lineThickness, lineThickness);
-                lr.SetPosition(0, start);
-                lr.SetPosition(1, end);
-                lineIndex++;
-
-
-                if (innerR > 0f && innerR2 > 0f)
-                {
-                    start = new Vector3(innerR * (float)Math.Cos(theta), innerR * (float)Math.Sin(theta), (-lengthIn / 2) + offsetIn);
-                    end = new Vector3(innerR2 * (float)Math.Cos(theta), innerR2 * (float)Math.Sin(theta), (lengthIn / 2) + offsetIn);
-                    lines[lineIndex] = new GameObject();
-
-                    lineObjects.Add(lines[lineIndex]);
-                    lines[lineIndex].transform.position = start;
-                    lines[lineIndex].AddComponent<LineRenderer>();
-                    lr = lines[lineIndex].GetComponent<LineRenderer>();
-                    lr.material = whiteDiffuseMat;
-                    lr.material.renderQueue = -1;
-                    lr.SetWidth(lineThickness, lineThickness);
-                    lr.SetPosition(0, start);
-                    lr.SetPosition(1, end);
-                    lineIndex++;
-                }
-            }
-
-        }
-        index = 0;
-
-        //front and back faces
-        for (int i = 0; i < sides; i++)
-        {
-            for (int j = 0; j <= 2; j = j + 2)
-            {
-                //side 1
-                triangles[index] = (i * 4) + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = ((i * 4) + 1) + j;
-                index++;
-                triangles[index] = ((i * 4) + 1) + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = ((((i + 1) * 4) % (sides * 4)) + 1) + j;
-                index++;
-
-                //side 2
-                triangles[index] = ((((i + 1) * 4) % (sides * 4)) + 1) + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = ((i * 4) + 1) + j;
-                index++;
-                triangles[index] = ((i * 4) + 1) + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = (i * 4) + j;
-                index++;
-            }
-        }
-
-        //inner and outer faces
-        for (int i = 0; i < sides; i++)
-        {
-            for (int j = 0; j <= 1; j++)
-            {
-                //outer pointing faces
-                triangles[index] = (i * 4) + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = (i * 4) + 2 + j;
-                index++;
-                triangles[index] = (i * 4) + 2 + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = (((i * 4) + 6) % (sides * 4)) + j;
-                index++;
-
-                //inner pointing faces
-                triangles[index] = (((i * 4) + 6) % (sides * 4)) + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = (i * 4) + 2 + j;
-                index++;
-                triangles[index] = (i * 4) + 2 + j;
-                index++;
-                triangles[index] = (((i + 1) * 4) % (sides * 4)) + j;
-                index++;
-                triangles[index] = (i * 4) + j;
-                index++;
-            }
-        }
-
-        Mesh mesh = new Mesh();
-
-        mesh.vertices = vertices;
-        mesh.triangles = triangles;
-
-        GameObject gameObject = new GameObject("Detector Piece", typeof(MeshFilter), typeof(MeshRenderer));
-        gameObject.tag = "Detector";
-        gameObject.GetComponent<MeshFilter>().mesh = mesh;
-        MeshCollider meshCollider = gameObject.AddComponent<MeshCollider>();
-        meshCollider.enabled = collidersOn;
-
-        for (int i = 0; i < lines.Length; i++)
-        {
-            if (lines[i] != null)
-            {
-
-                lines[i].transform.parent = gameObject.transform;
-                lines[i].GetComponent<LineRenderer>().useWorldSpace = false;
-                lines[i].transform.position = new Vector3(0, 0, 0);
-                lineObjects.Add(lines[i]);
-                lines[i].SetActive(false);
-            }
-        }
-
-        Material material = new Material(Shader.Find("Transparent/Diffuse"));
-        Color color = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
-
-        material.color = color;
-        material.renderQueue = renderQueue;
-
-        gameObject.GetComponent<MeshRenderer>().sharedMaterial = material;
-
-        gameObject.transform.eulerAngles = new Vector3(eulerAngle[0], -eulerAngle[1], eulerAngle[2]);
-
-        gameObject.transform.position = new Vector3(-scale * position[0], scale * position[1], scale * position[2]);
-        detectorParts.Add(gameObject);
-
-        if (!String.Equals(name, ""))
-        {
-
-            CreateNameTag(gameObject, name, eulerAngle, renderQueue);
-
-        }
-
-    }
-
-    // Function to normalize angles to [0, 360)
-    float NormalizeAngle(float angle)
-    {
-        angle %= 360; // Get the remainder when divided by 360
-        if (angle < 0) angle += 360; // Ensure positive angle
-        return angle;
-    }
-
-    public void CreateNameTag(GameObject gameObject, string name, float[] rot, int renderQueue)
-    {
-
-        Vector3[] vertices = gameObject.GetComponent<MeshFilter>().mesh.vertices;
-        // Create a new GameObject for the text
-        GameObject textObject = new GameObject("NameTagText");
-        TextMesh textMesh = textObject.AddComponent<TextMesh>();
-
-        // Set text properties
-        textMesh.text = name;
-        textMesh.fontSize = 48; // Smaller font size
-        textMesh.characterSize = 0.1f; // Smaller character size for better resolution   
-        textMesh.alignment = TextAlignment.Center; // Centered text
-
-        // Calculate the upper-right corner of the mesh bounds
-        Bounds bounds = gameObject.GetComponent<MeshFilter>().mesh.bounds;
-        Vector3 upperRight = new Vector3(bounds.max.x, bounds.max.y, bounds.max.z);
-
-        if (renderQueue % 2 == 0)
-        {
-            upperRight = new Vector3(bounds.max.x, bounds.min.y, bounds.max.z);
-        }
-
-        // Position the text near the upper-right corner of the mesh
-        Vector3 offset = new Vector3(0.2f, 0.2f, 0.0f); // Adjust as needed for spacing
-        textObject.transform.position = gameObject.transform.TransformPoint(upperRight + offset);
-
-        if (renderQueue % 2 == 0)
-        {
-            textObject.transform.position = gameObject.transform.TransformPoint(upperRight - offset);
-        }
-
-        // Optionally scale the text if needed
-        textObject.transform.localScale = new Vector3(0.3f, 0.3f, 0.3f); // Adjust scale for better sizing
-
-        // Create a new GameObject for the line
-        GameObject lineObject = new GameObject("Name Tag Line");
-        LineRenderer lineRenderer = lineObject.AddComponent<LineRenderer>();
-
-        // Set line material and appearance
-        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
-        lineRenderer.startWidth = lineThickness;
-        lineRenderer.endWidth = lineThickness;
-        lineRenderer.positionCount = 2;
-
-        // Position of the bottom of the text
-        Bounds textBounds = textObject.GetComponent<Renderer>().bounds;
-        // Main logic for determining textBottomCenter
-        Vector3 textBottomCenter = textBounds.center - new Vector3(0, textBounds.extents.y, 0);
-
-        // Normalize rotation angles
-        float normalizedX = NormalizeAngle(rot[0]);
-        float normalizedY = NormalizeAngle(rot[1]);
-        float normalizedZ = NormalizeAngle(rot[2]);
-
-        bool isAngleBetween90And270 = (normalizedX > 90 && normalizedX < 270) ||
-                                       (normalizedY > 90 && normalizedY < 270) ||
-                                       (normalizedZ > 90 && normalizedZ < 270);
-
-        if (isAngleBetween90And270 && renderQueue % 2 == 1)
-        {
-            textBottomCenter = textBounds.center + new Vector3(0, textBounds.extents.y, 0);
-        }
-        else if (isAngleBetween90And270 && renderQueue % 2 == 0)
-        {
-            textBottomCenter = textBounds.center - new Vector3(0, textBounds.extents.y, 0);
-        }
-        else if (renderQueue % 2 == 0)
-        {
-            textBottomCenter = textBounds.center + new Vector3(0, textBounds.extents.y, 0);
-        }
-
-        // Initialize the nearest vertex and minimum distance
-        Vector3 nearestVertex = Vector3.zero;
-        float minDistance = Mathf.Infinity;
-
-        // Find the nearest vertex to the text's bottom center
-        foreach (Vector3 vertex in vertices)
-        {
-            // Convert local vertex position to world space
-            Vector3 worldVertex = gameObject.transform.TransformPoint(vertex);
-
-            // Calculate the distance between the vertex and the text's bottom center
-            float distance = Vector3.Distance(textBottomCenter, worldVertex);
-
-            // If this vertex is closer than the previous, update nearest vertex
-            if (distance < minDistance)
-            {
-                minDistance = distance;
-                nearestVertex = worldVertex;
-            }
-        }
-
-        // Assign positions for the line
-        lineRenderer.SetPosition(0, textBottomCenter); // Start at the bottom of the text
-        lineRenderer.SetPosition(1, nearestVertex); // End at the nearest vertex of the mesh
-
-        lineObject.transform.parent = gameObject.transform;
-        lineObject.GetComponent<LineRenderer>().useWorldSpace = false;
-        lineObject.transform.position = Vector3.zero;
-        lineObject.SetActive(false);
-
-        // Create a parent GameObject for the pivot
-        GameObject pivotObject = new GameObject("Text Pivot");
-        pivotObject.transform.position = textBottomCenter; // Set the pivot position
-        textObject.transform.SetParent(pivotObject.transform); // Make text a child of the pivot
-        pivotObject.transform.parent = gameObject.transform;
-
-        // Set the pivot's position to the bottom center
-        pivotObject.transform.position = textBottomCenter;
-
-        pivots.Add(pivotObject);
-
-        textObject.SetActive(false);
-        textObject.transform.localScale = new Vector3(0.3f, 0.3f, 0.3f);
-
-        nameTagObjects.Add(textObject);
-        nameTagObjects.Add(lineObject);
     }
 
     public void Explode(float newValue)

@@ -44,7 +44,7 @@ public class PauseMenu : MonoBehaviour
     private float navigationMenuHideOffset = -920f;
     private float tourNavigationMenuHideOffset = -754f;
 
-    private string pdfFileName = "VIRTUE_User_Guide_V3_2_0.pdf";
+    private string pdfFileName = "VIRTUE_User_Guide_V3_2_1.pdf";
 
     private bool isMuted = false;
     private float previousVolume = 0.05f;
