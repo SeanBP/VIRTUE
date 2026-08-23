@@ -1,65 +1,11 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using System.IO;
 using UnityEngine.UI;
 using TMPro;
-
-[System.Serializable]
-public class TourHeader
-{
-    public string model_file;
-    public string events_file;
-    public string version;
-}
-
-[System.Serializable]
-public class TourText
-{
-    public string title = "";
-    public string body = "";
-}
-
-[System.Serializable]
-public class CameraSettings
-{
-    public float[] position = new float[3] { 10f, 0f, 0f };
-    public float[] focus = new float[3] { 0f, 0f, 0f };
-}
-
-[System.Serializable]
-public class EventSettings
-{
-    public int index = -1;
-    public float time_before = 10f;
-    public float speed = 5f;
-}
-
-[System.Serializable]
-public class ModelSettings
-{
-    public bool all_components = false;          
-    public List<int> components = new List<int>(); 
-    public List<int> lines_active = new List<int>();
-}
-
-
-[System.Serializable]
-public class TourScene
-{
-    public ModelSettings model_settings = new ModelSettings();
-    public EventSettings event_settings = new EventSettings();
-    public CameraSettings camera_settings = new CameraSettings();
-    public TourText text = new TourText();
-}
-
-
-[System.Serializable]
-public class TourFile
-{
-    public TourHeader header;
-    public List<TourScene> scenes;
-}
+using VirtueCore.Tours;
+using VirtueCore.Shared;
 
 public class TourMaker : MonoBehaviour
 {
@@ -76,11 +22,24 @@ public class TourMaker : MonoBehaviour
     private TourFile currentTour;
     private int currentSceneIndex = 0;
     private bool inTour = false;
-    private string targetVersion = "3.2.0";
+    private string targetVersion = "3.2.1";
+    // 3.2.0 tour files remain compatible -- see EventLoader/ComponentMaker's
+    // compatibleVersions for why.
+    private List<string> compatibleVersions = new List<string> { "3.2.0" };
     private ComponentMaker componentMaker;
     private EventLoader eventLoader;
     [SerializeField] private CameraController cameraController;
     [SerializeField] private PlayerController playerController;
+
+    // Tracks the currently-running tour-loading coroutine, so selecting a
+    // new tour while one is still loading aborts it via StopCoroutine
+    // instead of racing it. tourLoadToken is a second line of defense,
+    // checked right before the tour is actually applied (tourMenu shown,
+    // ShowScene called) -- mirrors the modelLoadToken pattern in
+    // ComponentMaker, in case this coroutine is ever kicked off some other
+    // way that bypasses the StopCoroutine guard in StartTour().
+    private Coroutine activeTourLoadCoroutine;
+    private int tourLoadToken = 0;
 
 
     void Start()
@@ -92,7 +51,7 @@ public class TourMaker : MonoBehaviour
         {
             if (errorText != null)
                 errorText.text = "ComponentMaker or EventLoader not found!";
-         
+
             return;
         }
 
@@ -148,14 +107,22 @@ public class TourMaker : MonoBehaviour
 
     public void StartTour()
     {
-       
+
         int index = tourDropdown.value;
 
         string path = tourFiles[index];
-        StartCoroutine(LoadTourCoroutine(path));
+
+        if (activeTourLoadCoroutine != null)
+        {
+            StopCoroutine(activeTourLoadCoroutine);
+            activeTourLoadCoroutine = null;
+        }
+
+        tourLoadToken++;
+        activeTourLoadCoroutine = StartCoroutine(LoadTourCoroutine(path, tourLoadToken));
     }
 
-    private IEnumerator LoadTourCoroutine(string path)
+    private IEnumerator LoadTourCoroutine(string path, int token)
     {
         string jsonText = "";
         normalMenu.SetActive(false);
@@ -174,7 +141,7 @@ public class TourMaker : MonoBehaviour
             yield break;
         }
 
-        if (!string.Equals(currentTour.header.version, targetVersion))
+        if (!VersionCheck.IsCompatible(currentTour.header.version, targetVersion, compatibleVersions))
         {
             if (errorText != null) errorText.text = "Tour JSON File not version " + targetVersion;
             Debug.LogError("Tour JSON File not version " + targetVersion);
@@ -190,6 +157,13 @@ public class TourMaker : MonoBehaviour
                 yield return null;
         }
 
+        // A newer tour selection has since started -- this load was
+        // effectively aborted. Bail out before touching the shared UI/state
+        // below so it can't clobber whatever the newer selection already
+        // applied.
+        if (token != tourLoadToken)
+            yield break;
+
         // Load events
         if (!string.IsNullOrEmpty(currentTour.header.events_file))
         {
@@ -201,17 +175,20 @@ public class TourMaker : MonoBehaviour
 
         }
 
-        
+        if (token != tourLoadToken)
+            yield break;
+
         tourMenu.SetActive(true);
         tourText.SetActive(true);
         currentSceneIndex = 0;
-        
+
+        activeTourLoadCoroutine = null;
         ShowScene(currentSceneIndex);
     }
 
     private void ShowScene(int sceneIndex)
     {
-        if (sceneIndex < 0 || sceneIndex >= currentTour.scenes.Count)
+        if (currentTour == null || sceneIndex < 0 || sceneIndex >= currentTour.scenes.Count)
             return;
 
         TourScene scene = currentTour.scenes[sceneIndex];

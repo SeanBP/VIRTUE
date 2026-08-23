@@ -1,0 +1,10 @@
+{
+  "name": "com.quantanaut.virtue.core",
+  "version": "0.1.0",
+  "displayName": "VIRTUE Core",
+  "description": "Shared JSON schemas and geometry/physics generation for the VIRTUE Desktop, VR, Mobile, and Lite Unity projects.",
+  "unity": "6000.5",
+  "author": {
+    "name": "Quantanaut"
+  }
+}
