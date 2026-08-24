@@ -545,7 +545,7 @@ print(
     f"{track_p.mean():.2f} GeV -> B_field_T = {B_FIELD_T:.3f} T"
 )
 
-B_FIELD_DIRECTION = np.array([0.0, 1.0, 0.0])
+B_FIELD_DIRECTION = np.array([0.0, -1.0, 0.0])
 
 # VIRTUE's animated propagation speed is rescaled to a few m/s (not the
 # real c) so tracks are watchable in real time. EventLoader.cs keeps

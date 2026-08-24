@@ -387,20 +387,22 @@ namespace VirtueCore.Events
                 }
                 else
                 {
-                    // px is reconstructed above with a sign flip relative to py/pz
-                    // (px = -p sin(theta) cos(phi)) -- a long-standing convention,
-                    // shared with vertex positions (xo = -vertex.x), for the
-                    // right-handed-to-Unity-left-handed display flip. For straight
-                    // tracks that's a harmless pure reflection, but the Lorentz
-                    // force dv/dt = (q/m)(v x B) is only symmetric under an
-                    // X-only reflection of v if B is reflected too -- as a
-                    // pseudovector, i.e. with its Y and Z components negated
-                    // instead of X (verified: this is the unique field transform
-                    // that keeps R_x(v) x B' = R_x(v x B) an identity for all
-                    // v, B). Without this correction, curvature around any field
-                    // with a Y or Z component doesn't correctly correspond to the
-                    // momentum/field the caller specified.
-                    Vector3 bFieldEffective = new Vector3(bFieldDirection.x, -bFieldDirection.y, -bFieldDirection.z);
+                    // bFieldDirection is used exactly as given, with no reflection
+                    // applied to it. This was verified against a pre-refactor copy
+                    // of this code that never had a field-direction concept at all
+                    // (it hardcoded B along +Z, unflipped) but produced
+                    // known-correct curvature; HMS2VIRTUE.py's own independent
+                    // helix_state (used to generate/validate HMS's track data)
+                    // likewise passes its B_FIELD_DIRECTION straight through with
+                    // no reflection. A version of this method briefly negated Y
+                    // and Z here on the theory that B needed pseudovector
+                    // treatment under the position/momentum's X-only reflection --
+                    // that reasoning was self-consistent in isolation but wrong:
+                    // px/py/pz and xo/yo/zo above are already the final
+                    // display-space coordinates the field needs to act on
+                    // directly, not physics-frame values awaiting their own
+                    // separate reflection.
+                    Vector3 bFieldEffective = bFieldDirection;
 
                     // Build a right-handed orthonormal basis {e1, e2, bFieldEffective}
                     // spanning the plane perpendicular to the field (e1 x e2 =
