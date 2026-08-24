@@ -4,6 +4,10 @@ VIRTUE is a standalone customizable event display for collider experiments for d
 
 The application is available for free on [GitHub](https://github.com/SeanBP/VIRTUE), [Steam](https://store.steampowered.com/app/2728380/VIRTUE), [Google Play](https://play.google.com/store/apps/details?id=com.Quantanaut.VIRTUE&hl=en_US), and [Zenodo](https://doi.org/10.5281/zenodo.10372110). This GitHub repository hosts VIRTUE Lite, a lightweight edition of the full desktop application.
 
+Note for macOS users: on first launch macOS may show a message stating it "could not verify" the application is free of malware. To open it, go to System Settings > Privacy & Security, scroll down, and click Open Anyway next to the VIRTUE Lite entry. This confirmation is only required the first time the application is opened.
+
+Note for Windows users: on first launch Windows may show a message stating "Windows protected your PC". To open it, select "More info" and then "Run anyway". This confirmation is only required the first time the application is opened.
+
 ## Contents
 
 - **ROOT2VIRTUE/** — Python conversion scripts (`ePIC2VIRTUE.py`, `FCS2VIRTUE.py`, `HMS2VIRTUE.py`) that read EDM4eic data products from CERN ROOT files and produce VIRTUE-compatible event JSON files. `RootFiles/` holds example input ROOT files.
