@@ -9,4 +9,4 @@ The application is available for free on [GitHub](https://github.com/SeanBP/VIRT
 - **ROOT2VIRTUE/** — Python conversion scripts (`ePIC2VIRTUE.py`, `FCS2VIRTUE.py`, `HMS2VIRTUE.py`) that read EDM4eic data products from CERN ROOT files and produce VIRTUE-compatible event JSON files. `RootFiles/` holds example input ROOT files.
 - **VIRTUE Lite Builds/** — Pre-built VIRTUE Lite executables for Windows, macOS, and Linux.
 - **VIRTUE Scripts/** — Mirrored C# source scripts from each of the four platform Unity projects (Mobile, Lite, Desktop, VR), included for reference and customization.
-- **VIRTUE_User_Guide_V3_2_0.pdf** — The full user guide, covering system requirements, the JSON event/model/tour file formats, and how to build the Unity projects.
+- **VIRTUE_User_Guide_V3_2_1.pdf** — The full user guide, covering system requirements, the JSON event/model/tour file formats, and how to build the Unity projects.
