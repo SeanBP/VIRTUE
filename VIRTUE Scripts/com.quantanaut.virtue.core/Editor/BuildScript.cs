@@ -119,19 +119,21 @@ namespace VirtueCore.Editor
             }
         }
 
-        // Windows (32/64-bit) and VR/Lite all use the bare product name
-        // (e.g. "VIRTUE Desktop.exe") -- this is what the Steam launch
-        // options and depot .vdf files already expect. Linux is the one
-        // exception: the existing builds name the executable after the
-        // full folder (e.g. "VIRTUE Desktop Linux.x86_64"), so that's
-        // matched here rather than imposing the Windows convention on it.
+        // Every platform's executable/bundle names the OS explicitly, since
+        // an .exe or a raw Linux binary carries no such indication on its
+        // own once it's out of its folder -- only macOS's .app extension is
+        // self-describing, so that one still uses the bare product name.
+        // NOTE: this renames the Windows executable from the old bare
+        // "VIRTUE Desktop.exe" -- Steam's Launch Options (configured on the
+        // Steamworks partner website, not in any local .vdf) reference that
+        // exact filename and need a matching manual update there.
         private static string ExecutableName(string productName, string folderName, BuildTarget target)
         {
             switch (target)
             {
                 case BuildTarget.StandaloneWindows64:
                 case BuildTarget.StandaloneWindows:
-                    return productName + ".exe";
+                    return productName + " Windows.exe";
                 case BuildTarget.StandaloneLinux64:
                     return folderName + ".x86_64";
                 default:
