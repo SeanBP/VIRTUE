@@ -119,23 +119,26 @@ namespace VirtueCore.Editor
             }
         }
 
-        // Every platform's executable/bundle names the OS explicitly, since
-        // an .exe or a raw Linux binary carries no such indication on its
-        // own once it's out of its folder -- only macOS's .app extension is
-        // self-describing, so that one still uses the bare product name.
-        // NOTE: this renames the Windows executable from the old bare
-        // "VIRTUE Desktop.exe" -- Steam's Launch Options (configured on the
-        // Steamworks partner website, not in any local .vdf) reference that
-        // exact filename and need a matching manual update there.
+        // Every executable/bundle uses the bare product name (e.g.
+        // "VIRTUE Desktop.exe", "VIRTUE Desktop.x86_64") -- the OS is
+        // already unambiguous from the format itself (.exe, .app, the
+        // .x86_64 extension) and from the containing folder, so repeating
+        // it in the filename is redundant.
+        // NOTE: this reverts both the Windows executable (was briefly
+        // "VIRTUE Desktop Windows.exe") and the Linux executable (was
+        // "VIRTUE Desktop Linux.x86_64") back to the bare product name.
+        // Steam's Launch Options (configured on the Steamworks partner
+        // website, not in any local .vdf) reference the exact filenames and
+        // need a matching manual update there.
         private static string ExecutableName(string productName, string folderName, BuildTarget target)
         {
             switch (target)
             {
                 case BuildTarget.StandaloneWindows64:
                 case BuildTarget.StandaloneWindows:
-                    return productName + " Windows.exe";
+                    return productName + ".exe";
                 case BuildTarget.StandaloneLinux64:
-                    return folderName + ".x86_64";
+                    return productName + ".x86_64";
                 default:
                     return productName;
             }
