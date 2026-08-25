@@ -5,67 +5,34 @@ Hall C HMS ROOT -> VIRTUE Converter
 
 Converts reconstructed "golden track" (H.gtr.*) electrons from an HMS
 replay ROOT file into the JSON format used by the VIRTUE event display.
-
 Only track objects are produced (no hits/clusters/jets/blocks).
 
-Each electron is written as six consecutive track segments rather than
-one, since EventLoader.cs applies B_field_T uniformly across the whole
-tracker volume -- a single 2 T track over the full 26 m would curve
-long before/after the real (5.3 m) dipole region:
-    1-3. Target -> Q1 -> Q2 -> Q3: straight (qOverP = 0) legs, each
-       ending in an idealized thin-lens kick at that quad's own
-       position. There's no real quad transport-matrix data available,
-       so the three lenses share one focal length (TRIPLET_FOCAL_LENGTH_M,
-       solve_shared_focal_length()) chosen so the *combined* triplet
-       still images the target onto the dipole entrance point-to-point
-       (independent of the target angle) -- generalizing the same
-       single-lens idea used before to the triplet's actual three
-       positions. Without some refocusing, the target's angular
-       acceptance (tens of mrad) diverges enough over ~9 m to clip the
-       tracker radius well before the dipole even starts, especially
-       vertically.
-    4. Q3 -> dipole entrance: straight (qOverP = 0), using the angle
-       coming out of the Q3 kick.
-    5. Inside the dipole: curved, using that same direction, the real
-       qOverP, and B_field_T.
-    6. Dipole exit -> detector hut back plane: straight (qOverP = 0),
-       using the direction the field left it pointing.
-The dipole's and quads' z-extents are read directly from HallC_HMS.json
-rather than hardcoded. Each segment's vertex/duration_ns picks up
-exactly where the previous one left off (EventLoader resets its
-internal clock to t=0 at each track's own vertex, using duration_ns[0]
-only as a display-timing offset and duration_ns[1] as that segment's
-own physics duration).
+Each electron is written as six track segments, since EventLoader.cs
+applies B_field_T uniformly across the whole tracker volume:
+    1-3. Target -> Q1 -> Q2 -> Q3: straight, each ending in an
+       idealized thin-lens kick (shared focal length from
+       solve_shared_focal_length(), imaging the target onto the dipole
+       entrance point-to-point).
+    4. Q3 -> dipole entrance: straight.
+    5. Inside the dipole: curved (real qOverP and B_field_T).
+    6. Dipole exit -> detector hut back plane: straight.
+Dipole/quad z-extents come from HallC_HMS.json. Each segment's
+vertex/duration_ns continues from where the previous one ended.
 
 Coordinate systems
 -------------------
-The HMS golden-track branches are expressed in the Hall Coordinate
-System (HCS), which is left-handed:
-    X_hcs = horizontal, beam-left
-    Y_hcs = vertical, up
-    Z_hcs = downstream, along the beam
+HMS golden-track branches are in the (left-handed) Hall Coordinate
+System: X horizontal beam-left, Y vertical up, Z downstream.
 
-(Confirmed against the data: px/p averages -sin(20 deg) across all
-tracks with only ~1 deg spread, i.e. X carries the full 20 deg HMS
-placement offset, while py/p averages ~0 with a wider ~3 deg spread --
-so X is the horizontal/dispersive axis and Y is vertical.)
+VIRTUE uses a right-handed frame with Z along the beamline. Converting
+HCS -> VIRTUE just flips Y (hcs_to_virtue(), phi_rot=0.0). HMS's own
+central ray -- what Q1/Q2/Q3 and the dipole entrance sit along -- is
+HMS_DIR, tilted HMS_ANGLE_DEG off Z toward -X (beam-right). Straight
+segments before the dipole are found by plane intersection (point/
+normal = HMS_DIR) since these elements aren't on the Z axis.
 
-VIRTUE expects a right-handed frame with Z along the beamline itself
-(not HMS's own central ray, which sits at HMS_ANGLE_DEG off Z, on the
-beam-right side -- the fixed rail HMS occupies in Hall C, matching the
-negative px/p above). Since HCS's own Z is already the beamline, the
-conversion is just the handedness fix:
-    1. Flip Y (up -> down).
-No X/Z rotation is needed or applied (hcs_to_virtue() is called with
-phi_rot=0.0 below). HMS's own central ray -- what Q1/Q2/Q3 and the
-dipole entrance sit along -- is now an off-axis direction, HMS_DIR,
-tilted HMS_ANGLE_DEG off Z toward -X. Every straight track segment
-before the dipole is found by intersecting with a plane (point on
-HMS_DIR, normal HMS_DIR) rather than reaching a Z-coordinate, since
-these elements are no longer on the Z axis themselves.
-
-There is no reconstructed vertex-z (reactz) branch in this file, so the
-target vertex is taken as (H.gtr.x, H.gtr.y, 0) before rotation.
+There is no reconstructed vertex-z (reactz) branch here, so the target
+vertex is taken as (H.gtr.x, H.gtr.y, 0) before rotation.
 """
 
 import json
@@ -80,53 +47,31 @@ import uproot as ur
 INPUT_FILE = "RootFiles/hms_replay_production_5848_-1.root"
 TREE_NAME = "T"
 
-# Written directly into the Unity project's StreamingAssets so the app
-# picks them up with no manual copy step.
-_STREAMING_ASSETS = (
-    "/Users/seanbp/Documents/Unity/VIRTUE Lite Unity Project/Assets/StreamingAssets"
-)
+# Local output folder; copy into a Unity project's StreamingAssets manually.
+_STREAMING_ASSETS = "output"
 OUTPUT_FILE = f"{_STREAMING_ASSETS}/Events/HMS_Events.json"
 GEOMETRY_FILE = f"{_STREAMING_ASSETS}/Models/HallC_HMS.json"
 
-MAX_EVENTS = 200
+MAX_EVENTS = 50
 
 ELECTRON_MASS_GEV = 0.000511
 
-# HMS's dipole bends by a fixed mechanical design angle regardless of the
-# momentum it's tuned to select, commonly cited as ~25.5 deg. B_field_T
-# is computed further down (after the dipole length is known and tracks
-# are loaded) from r = L/sin(DESIGN_BEND_ANGLE_DEG) and r = p/(0.3*B),
-# using the mean reconstructed momentum as the run's central value --
-# the run's real central-momentum/field setting isn't otherwise known,
-# so this is a best estimate consistent with HMS's actual optics rather
-# than an assumed round number.
+# HMS's fixed mechanical bend angle; B_field_T is derived from this and the
+# mean reconstructed momentum below (the run's real field setting isn't
+# otherwise known).
 DESIGN_BEND_ANGLE_DEG = 25.5
 
-# Each track segment's own duration_ns is computed exactly (segment 4
-# specifically terminates at the detector hut's back plane -- see
-# BACK_PLANE_POINT/NORMAL below), so the tracker boundary itself isn't
-# what decides where a track ends. It's sized deliberately loose here,
-# just large enough that it never clips a track before its own computed
-# endpoint does -- the dipole bends tracks by ~25.5 deg, well beyond
-# what a boundary tight around the pre-dipole axis could contain anyway.
+# Deliberately loose: each segment's endpoint is computed exactly (see
+# BACK_PLANE_POINT/NORMAL), so this boundary should never be what clips a
+# track.
 TRACKER_RADIUS_M = 50.0
 TRACKER_LENGTH_M = 50.0
 
-# Segment length used to subdivide each track's curved path (ns). HMS
-# tracks span ~26 m at close to the speed of light (~90 ns of flight
-# time), so a coarser step than the display default keeps the segment
-# count per track manageable when many events are loaded at once.
-SEGMENT_NS = 0.2
+SEGMENT_NS = 0.2  # ns per rendered curve step
 
-# EventLoader falls back to timing defaults of the form
-# "0.001 * X / totScale" (totScale = header.scale * length_unit factor)
-# whenever the app's rate/before/after UI fields are empty, which they
-# are by default. That formula is calibrated for millimeter-scale files
-# (totScale ~ 0.001); at length_unit "m" (totScale = 1.0) it collapses
-# to sub-nanosecond fallback windows, so no track segment ever becomes
-# visible before the event auto-advances. All example VIRTUE event
-# files use "mm" for this reason -- so length values are written out in
-# mm here even though the geometry is computed in meters above.
+# EventLoader's rate/before/after timing defaults break down at
+# length_unit="m" (sub-nanosecond fallback windows), so lengths are written
+# in mm here even though geometry is computed in meters.
 MM_PER_M = 1000.0
 
 # ============================================================================
@@ -188,9 +133,8 @@ C_LIGHT = 0.299792  # m/ns
 
 def helix_basis(b_hat):
     """
-    Right-handed basis {e1, e2, b_hat} spanning the plane perpendicular to
-    the field, mirroring EventLoader.cs's CreateTrackObjects exactly (same
-    Vector3.up/Vector3.right fallback for a degenerate cross product).
+    Right-handed basis {e1, e2, b_hat} perpendicular to the field,
+    mirroring EventLoader.cs's CreateTrackObjects exactly.
     """
 
     up = np.array([0.0, 1.0, 0.0])
@@ -208,8 +152,7 @@ def helix_basis(b_hat):
 def helix_state(vertex, momentum, p_mag, b_field, q, b_hat, t):
     """
     Position and velocity at time t for a charged particle in a uniform
-    field b_field*b_hat, mirroring EventLoader.cs's HelixPosition (plus its
-    time-derivative for velocity).
+    field b_field*b_hat, mirroring EventLoader.cs's HelixPosition.
     """
 
     e1, e2 = helix_basis(b_hat)
@@ -232,11 +175,8 @@ def helix_state(vertex, momentum, p_mag, b_field, q, b_hat, t):
 def find_time_at_plane(plane_point, plane_normal, position_of_t, t_max, coarse_steps=5000):
     """
     First time in [0, t_max] at which position_of_t(t) crosses the plane
-    (plane_point, plane_normal), via a coarse forward scan of the signed
-    distance to the plane (brackets the crossing) then bisection. Returns
-    None if the plane is never crossed within t_max. Generalizes a
-    Z-coordinate crossing, which is just the case plane_point=(0,0,z),
-    plane_normal=(0,0,1).
+    (plane_point, plane_normal): a coarse forward scan brackets the
+    crossing, then bisection refines it. None if never crossed.
     """
 
     def signed_dist(t):
@@ -267,8 +207,7 @@ def find_time_at_plane(plane_point, plane_normal, position_of_t, t_max, coarse_s
 def time_to_plane(vertex, velocity, plane_point, plane_normal):
     """
     Exact time at which straight-line motion from vertex at velocity
-    crosses the plane (plane_point, plane_normal). None if moving
-    parallel to the plane (never crosses).
+    crosses the plane (plane_point, plane_normal). None if parallel.
     """
 
     denom = np.dot(velocity, plane_normal)
@@ -288,18 +227,11 @@ def _lens_matrix(f):
 def solve_shared_focal_length(z_object, z_lenses, z_image):
     """
     Focal length f, shared by thin lenses at each z in z_lenses, such
-    that a point at z_object images to a single point at z_image
-    independent of the emission angle (point-to-point imaging: the
-    combined ABCD matrix's (0,1) element -- the coefficient of the
-    initial angle in the final position -- is zero). Generalizes the
-    single-lens f = d1*d2/(d1+d2) result to N lenses.
-
-    With multiple lenses this equation has several roots (the ray can
-    cross the axis different numbers of times between lenses); this
-    returns the largest-f root found in the scanned range, i.e. the
-    weakest/least extreme lensing that still satisfies the imaging
-    condition, which is the physically sensible one for a real optical
-    system that doesn't cross the axis repeatedly between elements.
+    that a point at z_object images point-to-point onto z_image
+    (combined ABCD matrix's (0,1) element is zero). Generalizes the
+    single-lens f = d1*d2/(d1+d2) result to N lenses. Multiple roots can
+    satisfy this; returns the largest (weakest-lensing, physically
+    sensible) one found in the scanned range.
     """
 
     def m01(f):
@@ -349,19 +281,12 @@ hms_angle_deg = float(hms_angle_readback[0]) if len(hms_angle_readback) else 20.
 
 hms_p_readback = settings_tree["ecP_HMS"].array(library="np")
 hms_p_readback = hms_p_readback[np.abs(hms_p_readback) < 1e6]
-# HMS central-momentum sign indicates spectrometer polarity: negative ->
-# configured to bend negatively-charged particles (electrons) to the focal
-# plane.
+# Negative central momentum -> HMS polarity for electrons.
 charge = -1.0 if (len(hms_p_readback) and hms_p_readback[0] < 0) else 1.0
 
 phi_rot = np.radians(hms_angle_deg)
 
-# HMS's own central ray direction in the new (Z=beamline) frame: tilted
-# HMS_ANGLE_DEG off Z toward -X (beam-right -- verified via the same HCS
-# derivation used to sign-check the SHMS placeholder direction below:
-# rotating (x_hcs, z_hcs)=(-sin(phi_rot), cos(phi_rot)) -- the vector
-# that maps to pure +Z_v under the *old* rotated frame -- through the
-# now-trivial (phi_rot=0) hcs_to_virtue transform gives this directly).
+# HMS's central ray in the (Z=beamline) VIRTUE frame, tilted off Z toward -X.
 HMS_DIR = np.array([-np.sin(phi_rot), 0.0, np.cos(phi_rot)])
 
 print(f"HMS angle: {hms_angle_deg} deg, track charge: {charge:+.0f}")
@@ -370,10 +295,8 @@ print(f"HMS angle: {hms_angle_deg} deg, track charge: {charge:+.0f}")
 # Incoming Beam Particle
 # ============================================================================
 
-# The beam now travels straight along +Z (Z_hcs = Z_virtue, no rotation).
-# VIRTUE's Particle direction is built from angle_rad = [a, b] as:
-#   dx = -cos(b) sin(a), dy = sin(b), dz = cos(b) cos(a)
-# which is satisfied by a = b = 0 for direction (0, 0, 1).
+# angle_rad=[0,0] gives direction (0,0,1) under VIRTUE's Particle convention
+# (dx=-cos(b)sin(a), dy=sin(b), dz=cos(b)cos(a)) -- the beam travels +Z.
 beam_angle_rad = [0.0, 0.0]
 
 # ============================================================================
@@ -397,11 +320,8 @@ finite = (
     & np.isfinite(branches["H.gtr.y"])
 )
 
-# Reject the small number of badly-reconstructed tracks that pass H.gtr.ok
-# but carry unphysical (huge) momentum/position values. H.gtr.x/y are in
-# the TRANSPORT-convention unit of centimeters (not meters) -- the bulk of
-# the distribution sits at a few mm (raster/target size), so a 50 cm bound
-# is generous while still rejecting genuine garbage.
+# Reject badly-reconstructed tracks that pass H.gtr.ok but carry unphysical
+# values. H.gtr.x/y are in cm (TRANSPORT convention).
 sane = (
     (np.abs(branches["H.gtr.px"]) < 10)
     & (np.abs(branches["H.gtr.py"]) < 10)
@@ -458,13 +378,10 @@ else:
 # Geometry: Read Fixed Distances, Then Reposition Everything Along HMS_DIR
 # ============================================================================
 
-# HMS_ANGLE_DEG tilts the *entire* pre-dipole spectrometer (target through
-# the dipole entrance) off the beamline -- these elements no longer sit on
-# the Z axis themselves, so every position below is HMS_DIR times a fixed
-# distance from the target, not a Z-coordinate. The local transverse basis
-# for the pre-dipole thin-lens optics is {HMS_U, HMS_V}: HMS_V is just
-# global Y (the tilt is purely horizontal, so vertical is untouched), and
-# HMS_U is the in-plane direction perpendicular to HMS_DIR.
+# Every pre-dipole position below is HMS_DIR times a fixed distance from the
+# target (these elements aren't on the Z axis). {HMS_U, HMS_V} is the local
+# transverse basis for the thin-lens optics: HMS_V is global Y, HMS_U is
+# in-plane perpendicular to HMS_DIR.
 HMS_U = np.array([np.cos(phi_rot), 0.0, np.sin(phi_rot)])
 HMS_V = np.array([0.0, 1.0, 0.0])
 HMS_YAW_DEG = float(np.degrees(np.arctan2(HMS_DIR[0], HMS_DIR[2])))
@@ -472,10 +389,9 @@ HMS_YAW_DEG = float(np.degrees(np.arctan2(HMS_DIR[0], HMS_DIR[2])))
 with open(GEOMETRY_FILE) as f:
     geometry = json.load(f)
 
-# Distances are read via the norm of each component's *current* position
-# rather than its Z-coordinate, so this stays correct (and idempotent)
-# whether the file currently holds the original straight-Z layout or an
-# already-tilted one from a previous run of this script.
+# Distances are read via norm of each component's current position (not its
+# Z-coordinate), so this is idempotent whether the file is fresh or already
+# repositioned by a previous run.
 target = next(c for c in geometry["components"] if c["name"] == "Target")
 beampipe = next(c for c in geometry["components"] if c["name"] == "Beampipe")
 q1 = next(c for c in geometry["components"] if c["name"] == "HMS Q1")
@@ -500,9 +416,7 @@ Q3_POS = HMS_DIR * Q3_DIST
 DIPOLE_ENTRANCE_POS = HMS_DIR * DIPOLE_ENTRANCE_DIST
 DIPOLE_EXIT_POS = HMS_DIR * DIPOLE_EXIT_DIST
 
-# Target and Beampipe sit on the beamline (Z) itself now, so both align
-# with it directly -- no tilt.
-BEAMPIPE_GAP_M = 0.1  # matches the original gap before the target
+BEAMPIPE_GAP_M = 0.1
 BEAMPIPE_LENGTH_M = beampipe["length"][0]
 target["euler_angles_deg"] = [0.0, 0.0, 0.0]
 beampipe["position"] = [0.0, 0.0, float(-(BEAMPIPE_GAP_M + BEAMPIPE_LENGTH_M / 2.0))]
@@ -515,16 +429,12 @@ q2["euler_angles_deg"] = [0.0, HMS_YAW_DEG, 0.0]
 q3["position"] = [float(v) for v in Q3_POS]
 q3["euler_angles_deg"] = [0.0, HMS_YAW_DEG, 0.0]
 dipole["position"] = [float(v) for v in HMS_DIR * DIPOLE_CENTER_DIST]
-dipole["euler_angles_deg"] = [0.0, HMS_YAW_DEG, 0.0]
-# Widen the dipole block so it visually contains the real (not just
-# design-central) per-track spread through the bend.
-dipole["size"][0] = 5.0
+dipole["size"][0] = 1.0
+# dipole["size"][1] and dipole["euler_angles_deg"] are set later, once the
+# average exit direction is known (see "Average Entry Angle" below).
 
-# SHMS placeholder: mirrored across the beamline from HMS (Hall C's fixed
-# hall geometry -- HMS beam-right, SHMS beam-left), at the same
-# representative angle magnitude (see the SHMS-placement discussion
-# earlier in this project). Now that Z is the beamline itself, this is
-# just HMS_DIR reflected in X -- no need to add HMS_ANGLE_DEG in.
+# SHMS placeholder: mirrored across the beamline (HMS beam-right, SHMS
+# beam-left).
 SHMS_PLACEHOLDER_ANGLE_DEG = hms_angle_deg
 shms_phi = np.radians(SHMS_PLACEHOLDER_ANGLE_DEG)
 SHMS_DIR = np.array([np.sin(shms_phi), 0.0, np.cos(shms_phi)])
@@ -536,8 +446,6 @@ shms_magnets["euler_angles_deg"] = [0.0, SHMS_YAW_DEG, 0.0]
 shms_hut["position"] = [float(v) for v in SHMS_DIR * SHMS_HUT_DIST]
 shms_hut["euler_angles_deg"] = [0.0, SHMS_YAW_DEG, 0.0]
 
-# B_field_T from HMS's fixed design bend angle and the run's mean
-# reconstructed momentum (see DESIGN_BEND_ANGLE_DEG above).
 design_radius_m = DIPOLE_LENGTH_M / np.sin(np.radians(DESIGN_BEND_ANGLE_DEG))
 B_FIELD_T = float(track_p.mean() / (0.3 * design_radius_m))
 print(
@@ -545,34 +453,41 @@ print(
     f"{track_p.mean():.2f} GeV -> B_field_T = {B_FIELD_T:.3f} T"
 )
 
-B_FIELD_DIRECTION = np.array([0.0, -1.0, 0.0])
+# HMS bends vertically: the field is horizontal, perpendicular to both
+# HMS_DIR and Y. Sign (-HMS_U) chosen so that, with `charge`, an electron
+# curves upward -- verified numerically via helix_state(). This is the true
+# physical field, used below for every position/direction this script
+# computes for itself.
+B_FIELD_DIRECTION = -HMS_U
 
-# VIRTUE's animated propagation speed is rescaled to a few m/s (not the
-# real c) so tracks are watchable in real time. EventLoader.cs keeps
-# curvature radii consistent within that rescaled space by never using a
-# track's real GeV momentum for the bend math -- it derives an internal
-# magnitude from qOverP alone:
-#   P_internal = eScale / (cm * |qOverP|) = (1e9 / 2.998e8) * P_real
-# (eScale = 1e9 for "GeV", cm = 2.998e8 matches its own constant name).
-# Direction-ratio quantities (velocity, a0, b0) are invariant to this
-# rescaling, but omega = (q*B/P)*c is not, so the dipole-region curvature
-# must be computed with this same internal P or the radius comes out
-# ~3.34x too small.
+# EventGeometry.cs (VIRTUE Scripts/com.quantanaut.virtue.core) reconstructs
+# each track from vertex/angle_rad with an X-only mirror for the right-
+# handed-physics-to-Unity-left-handed-display flip, but (as of commit
+# c4735ea) uses B_field_direction from the header unreflected. Under an
+# X-only mirror, B is a pseudovector and needs its Y,Z components negated to
+# keep the Lorentz force self-consistent (verified: this is what makes the
+# rendered curve land exactly on the following segment). So the header gets
+# this Y,Z-negated field, while this script's own geometry keeps using the
+# true, unflipped B_FIELD_DIRECTION.
+HEADER_B_FIELD_DIRECTION = np.array(
+    [B_FIELD_DIRECTION[0], -B_FIELD_DIRECTION[1], -B_FIELD_DIRECTION[2]]
+)
+
+# EventLoader.cs derives its own momentum scale from qOverP alone
+# (P_internal = eScale/(cm*|qOverP|) = (1e9/2.998e8)*P_real) rather than
+# using a track's real GeV momentum, to keep curvature radii sane at
+# VIRTUE's rescaled display speed. omega=(q*B/P)*c isn't scale-invariant, so
+# the dipole curvature must use this same internal P or the radius comes
+# out ~3.34x too small.
 INTERNAL_P_SCALE = 1e9 / 2.998e8
 
 # ============================================================================
 # Reposition Bent Geometry (Detector Hut placement)
 # ============================================================================
 
-# The dipole bends the design (mean-momentum, on-axis) trajectory by
-# DESIGN_BEND_ANGLE_DEG off HMS_DIR, so anything downstream of it --
-# concretely, the Detector Hut -- needs to sit along that bent direction.
-# Computed with the actual (verified) curvature formula rather than just
-# the nominal angle, so it's consistent with the real track physics below
-# (INTERNAL_P_SCALE, B_FIELD_DIRECTION, etc.).
-#
-# The drift-space gap between the dipole exit and the hut is a fixed
-# design distance (3.85 m, unrelated to HMS_ANGLE_DEG), same as before.
+# Design (mean-momentum) trajectory, used only as the hut's *position*
+# anchor -- orientation instead uses the real per-track average below,
+# since the dipole's bend angle is momentum-dependent.
 POST_DIPOLE_DRIFT_M = 3.85
 _design_momentum = HMS_DIR * track_p.mean() * INTERNAL_P_SCALE
 _design_p_mag = track_p.mean() * INTERNAL_P_SCALE
@@ -594,40 +509,12 @@ design_exit_vertex, design_exit_velocity = helix_state(
     B_FIELD_DIRECTION, _design_t_exit
 )
 design_exit_direction = design_exit_velocity / np.linalg.norm(design_exit_velocity)
-design_yaw_deg = float(
-    np.degrees(np.arctan2(design_exit_direction[0], design_exit_direction[2]))
-)
-
-hut_start = design_exit_vertex + design_exit_direction * POST_DIPOLE_DRIFT_M
-hut_center = hut_start + design_exit_direction * (hut["size"][2] / 2.0)
-BACK_PLANE_POINT = hut_start + design_exit_direction * hut["size"][2]
-BACK_PLANE_NORMAL = design_exit_direction
-
-hut["position"] = [float(v) for v in hut_center]
-hut["euler_angles_deg"] = [0.0, design_yaw_deg, 0.0]
-
-with open(GEOMETRY_FILE, "w") as f:
-    json.dump(geometry, f, indent=4)
-
-print(
-    f"HMS_DIR yaw = {HMS_YAW_DEG:.2f} deg, design bend = "
-    f"{np.degrees(np.arccos(np.dot(design_exit_direction, HMS_DIR))):.2f} deg further, "
-    f"hut repositioned to {hut['position']}, yaw = {design_yaw_deg:.2f} deg"
-)
 
 print(
     f"Dipole spans {DIPOLE_ENTRANCE_DIST:.2f} to {DIPOLE_EXIT_DIST:.2f} m "
     f"along HMS_DIR"
 )
 
-# Shared focal length for the three idealized thin lenses at Q1/Q2/Q3
-# (see solve_shared_focal_length() above and the module docstring). This
-# is an abstract 1-D optics calculation along whatever axis the lenses
-# sit on (HMS_DIR here, not Z), so it just needs the same distances as
-# before. Computed once using the nominal target position (0) rather
-# than per-track: the target's few-cm spread changes this by a
-# completely negligible amount relative to the ~9 m lens-to-image
-# distances.
 TRIPLET_FOCAL_LENGTH_M = solve_shared_focal_length(
     0.0, [Q1_DIST, Q2_DIST, Q3_DIST], DIPOLE_ENTRANCE_DIST
 )
@@ -637,13 +524,14 @@ print(
 )
 
 
-def build_track_segments(vertex0, momentum0, p_mag):
+def propagate_through_dipole(vertex0, momentum0, p_mag):
     """
-    Split one electron's path into six track segments: three straight
-    legs through idealized thin lenses at Q1/Q2/Q3, straight from Q3 to
-    the dipole entrance (now converging), curved inside the dipole,
-    straight after. Returns a list of dicts with
-    qOverP/angle_rad/vertex(m)/duration_ns for each segment, in order.
+    Segments 1-5 of one electron's path (straight legs through the
+    Q1/Q2/Q3 lenses, straight to the dipole entrance, curved through the
+    dipole). Split from the final segment because that one needs the hut's
+    back plane, which depends on every track's exit direction (see
+    "Average Entry Angle" below). Returns (segments, start_time, vertex2,
+    velocity2).
     """
 
     segments = []
@@ -651,16 +539,8 @@ def build_track_segments(vertex0, momentum0, p_mag):
     direction = momentum0 / p_mag
     start_time = 0.0
 
-    # --- Segments 1-3: straight legs through the Q1/Q2/Q3 thin lenses ---
-    # Same idealized-lens point-to-point-imaging idea as before, just
-    # split across the triplet's actual three positions instead of one
-    # lumped lens (TRIPLET_FOCAL_LENGTH_M, shared by all three, computed
-    # once above). Q1/Q2/Q3 are off the Z axis now (tilted along HMS_DIR),
-    # so each leg is found via plane intersection rather than reaching a
-    # Z-coordinate, and the lens kick itself is applied in the local
-    # {HMS_U, HMS_V} transverse basis (perpendicular to HMS_DIR) rather
-    # than global (X, Y) -- otherwise the kick wouldn't correctly decouple
-    # from the tilted propagation axis.
+    # Segments 1-3: straight legs through the Q1/Q2/Q3 thin lenses, kick
+    # applied in the {HMS_U, HMS_V} transverse basis.
     for lens_pos in (Q1_POS, Q2_POS, Q3_POS):
         theta, phi = calculate_angles(*direction)
         velocity = C_LIGHT * direction
@@ -687,7 +567,7 @@ def build_track_segments(vertex0, momentum0, p_mag):
         direction = direction / np.linalg.norm(direction)
         vertex = vertex_at_lens
 
-    # --- Segment 4: straight, Q3 -> dipole entrance ---
+    # Segment 4: straight, Q3 -> dipole entrance.
     theta_f, phi_f = calculate_angles(*direction)
     velocity_focused = C_LIGHT * direction
     t_to_dipole = max(
@@ -705,7 +585,7 @@ def build_track_segments(vertex0, momentum0, p_mag):
 
     momentum_focused = direction * p_mag
 
-    # --- Segment 5: curved, inside the dipole ---
+    # Segment 5: curved, inside the dipole.
     momentum_focused_internal = momentum_focused * INTERNAL_P_SCALE
     p_mag_internal = p_mag * INTERNAL_P_SCALE
 
@@ -721,8 +601,6 @@ def build_track_segments(vertex0, momentum0, p_mag):
         DIPOLE_EXIT_POS, HMS_DIR, position_of_t, t_dipole_window
     )
     if t_dipole is None:
-        # Track curves too sharply to cross the dipole exit plane going
-        # forward within the search window -- extend once, generously.
         t_dipole = find_time_at_plane(
             DIPOLE_EXIT_POS, HMS_DIR, position_of_t, t_dipole_window * 5.0
         )
@@ -742,11 +620,15 @@ def build_track_segments(vertex0, momentum0, p_mag):
     })
     start_time += t_dipole
 
-    # --- Segment 6: straight, dipole exit -> detector hut back plane ---
-    # Exact plane intersection (point=BACK_PLANE_POINT, normal=
-    # BACK_PLANE_NORMAL) rather than relying on the tracker boundary to
-    # clip it -- the boundary is sized generously and shouldn't be the
-    # thing deciding where a track ends.
+    return segments, start_time, vertex2, velocity2
+
+
+def finish_track_segments(segments, start_time, vertex2, velocity2):
+    """
+    Appends segment 6 (straight, dipole exit -> detector hut back plane)
+    using the final BACK_PLANE_POINT/NORMAL (see "Average Entry Angle").
+    """
+
     theta2, phi2 = calculate_angles(*velocity2)
     denom = np.dot(velocity2, BACK_PLANE_NORMAL)
     if denom > 0:
@@ -766,25 +648,107 @@ def build_track_segments(vertex0, momentum0, p_mag):
 
 
 # ============================================================================
+# Average Entry Angle at Detector Hut
+# ============================================================================
+
+# The hut is tilted to the actual sampled tracks' average dipole-exit
+# direction, not the single idealized design trajectory (the dipole's bend
+# angle is momentum-dependent). Segments 1-5 are computed once here and
+# cached for reuse when segment 6 is appended below.
+dipole_exit_cache = []
+_exit_direction_sum = np.zeros(3)
+
+for n in range(len(selected)):
+    momentum0 = np.array([track_px[n], track_py[n], track_pz[n]])
+    vertex0 = np.array(track_vertex[n])
+    segments, start_time, vertex2, velocity2 = propagate_through_dipole(
+        vertex0, momentum0, track_p[n]
+    )
+    dipole_exit_cache.append((segments, start_time, vertex2, velocity2))
+    _exit_direction_sum += velocity2 / np.linalg.norm(velocity2)
+
+avg_exit_direction = _exit_direction_sum / np.linalg.norm(_exit_direction_sum)
+
+
+def direction_to_pitch_yaw(direction):
+    """
+    euler_angles_deg [pitch, yaw] orienting a component's local +Z axis
+    along `direction` (a unit vector in this script's own unmirrored
+    frame). Derived from how ComponentMaker.cs applies euler_angles_deg
+    (`eulerAngles = (angles[0], -angles[1], angles[2])`, Unity's left-
+    handed Rx then Ry(-yaw), Z/X/Y order): solving
+    Ry(-yaw)*Rx(pitch)*(0,0,1) = (-dx, dy, dz) gives yaw = atan2(dx, dz)
+    (unchanged by pitch) and pitch = -arcsin(dy). Matches the existing
+    yaw-only formula when dy=0; not independently verified in Unity for
+    nonzero pitch.
+    """
+
+    yaw_deg = float(np.degrees(np.arctan2(direction[0], direction[2])))
+    pitch_deg = float(np.degrees(-np.arcsin(direction[1])))
+    return pitch_deg, yaw_deg
+
+
+# Dipole: tilted along the bisector of entrance (HMS_DIR) and average exit
+# direction, leaning partway into the bend like a real sector-magnet
+# diagram rather than sitting flat.
+dipole_bisector = HMS_DIR + avg_exit_direction
+dipole_bisector = dipole_bisector / np.linalg.norm(dipole_bisector)
+dipole_pitch_deg, dipole_yaw_deg = direction_to_pitch_yaw(dipole_bisector)
+dipole["euler_angles_deg"] = [dipole_pitch_deg, dipole_yaw_deg, 0.0]
+
+# Sized off the *design* trajectory's climb rather than the sample max --
+# real per-track exit height varies a lot with momentum (one low-p outlier
+# in a typical sample can be 2-3x the rest), so a max-driven box is
+# oversized for the typical track.
+DIPOLE_HEIGHT_MARGIN = 2.0
+dipole_climb_m = abs(float(design_exit_vertex[1]))
+dipole["size"][1] = float(DIPOLE_HEIGHT_MARGIN * dipole_climb_m)
+
+hut_pitch_deg, hut_yaw_deg = direction_to_pitch_yaw(avg_exit_direction)
+
+hut_start = design_exit_vertex + avg_exit_direction * POST_DIPOLE_DRIFT_M
+hut_center = hut_start + avg_exit_direction * (hut["size"][2] / 2.0)
+BACK_PLANE_POINT = hut_start + avg_exit_direction * hut["size"][2]
+BACK_PLANE_NORMAL = avg_exit_direction
+
+hut["position"] = [float(v) for v in hut_center]
+hut["euler_angles_deg"] = [hut_pitch_deg, hut_yaw_deg, 0.0]
+
+with open(GEOMETRY_FILE, "w") as f:
+    json.dump(geometry, f, indent=4)
+
+print(
+    f"HMS_DIR yaw = {HMS_YAW_DEG:.2f} deg, design bend = "
+    f"{np.degrees(np.arccos(np.dot(design_exit_direction, HMS_DIR))):.2f} deg further "
+    f"(mean p = {track_p.mean():.2f} GeV); average of {len(selected)} sampled tracks' "
+    f"actual exit angles = {np.degrees(np.arccos(np.dot(avg_exit_direction, HMS_DIR))):.2f} deg"
+)
+print(
+    f"Dipole tilted to pitch = {dipole_pitch_deg:.2f} deg, yaw = {dipole_yaw_deg:.2f} deg "
+    f"(bisector of entrance/exit); height = {dipole['size'][1]:.2f} m "
+    f"({DIPOLE_HEIGHT_MARGIN:.1f}x design climb of {dipole_climb_m:.2f} m)"
+)
+print(
+    f"Hut repositioned to {hut['position']}, pitch = {hut_pitch_deg:.2f} deg, "
+    f"yaw = {hut_yaw_deg:.2f} deg"
+)
+
+
+# ============================================================================
 # Create VIRTUE Header
 # ============================================================================
 
 output = {
     "header": {
-        "version": "3.2.0",
+        "version": "3.2.1",
         "experiment": "Hall C HMS",
         "energy_unit": "GeV",
         "color_bar": "Log",
         "length_unit": "mm",
-        # Auto-load the matching geometry alongside this event file.
         "model_file": os.path.basename(GEOMETRY_FILE),
         # time_after covers the longest track's full 6-segment duration
-        # (~87-91 ns, verified against the actual generated events) with
-        # some margin, so every track reaches the detector hut's back
-        # plane before the event auto-advances. time_before is set to
-        # roughly the Beampipe's own length (see HallC_HMS.json) so the
-        # animated beam particle appears to originate from about where
-        # the pipe starts, rather than the shorter default.
+        # (~87-91 ns) with margin; time_before roughly matches the
+        # beampipe's own length.
         "time_before": 20.0,
         "time_after": 100.0,
         "particles": [
@@ -796,10 +760,9 @@ output = {
         ],
         "tracker_settings": {
             "B_field_T": float(B_FIELD_T),
-            # HMS is a dipole: the field is vertical (+Y in this frame),
-            # perpendicular to the central ray, bending tracks in the
-            # horizontal X-Z (dispersive) plane -- not solenoidal (+Z).
-            "B_field_direction": [0.0, 1.0, 0.0],
+            # HEADER_B_FIELD_DIRECTION, not B_FIELD_DIRECTION -- see its
+            # definition above.
+            "B_field_direction": [float(v) for v in HEADER_B_FIELD_DIRECTION],
             "tracker_boundary": [
                 float(TRACKER_RADIUS_M * MM_PER_M),
                 0.0,
@@ -827,9 +790,8 @@ for n, i in enumerate(selected):
         else [float(fraction), 0.0, float(1.0 - fraction), 1.0]
     )
 
-    momentum0 = np.array([track_px[n], track_py[n], track_pz[n]])
-    vertex0 = np.array(track_vertex[n])
-    segments = build_track_segments(vertex0, momentum0, track_p[n])
+    segments, start_time, vertex2, velocity2 = dipole_exit_cache[n]
+    segments = finish_track_segments(segments, start_time, vertex2, velocity2)
 
     event = {
         "event_data": {
