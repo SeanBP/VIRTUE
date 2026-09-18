@@ -38,11 +38,11 @@ public class ComponentMaker : MonoBehaviour
     private float scale = 1.0f;
     private float lineThickness = 0.01f;
     public UnityEngine.UI.Text detectorText;
-    private string targetVersion = "3.2.1";
+    private string targetVersion = "3.2.2";
     // 3.2.0 model files remain compatible: the only change since then is the
     // header field rename (detector -> title), which this parser already
     // accepts via the legacy detector alias above.
-    private List<string> compatibleVersions = new List<string> { "3.2.0" };
+    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1" };
     private List<string> fileNames = new List<string>();
     private List<string> displayNames = new List<string>();
     public TMP_Dropdown fileDropdown;
@@ -753,8 +753,8 @@ public class ComponentMaker : MonoBehaviour
             }
             else
             {
-                errorText.text = "Model JSON File not version " + targetVersion;
-                UnityEngine.Debug.LogError("Model JSON File not version " + targetVersion);
+                errorText.text = "Model JSON file is not version " + targetVersion + ".";
+                UnityEngine.Debug.LogError("Model JSON file is not version " + targetVersion + ".");
             }
         }
         catch (Exception ex)

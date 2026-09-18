@@ -20,10 +20,10 @@ public class TourMaker : MonoBehaviour
     private List<string> tourFiles = new List<string>();
     private TourFile currentTour;
     private int currentSceneIndex = 0;
-    private string targetVersion = "3.2.1";
+    private string targetVersion = "3.2.2";
     // 3.2.0 tour files remain compatible -- see EventLoader/ComponentMaker's
     // compatibleVersions for why.
-    private List<string> compatibleVersions = new List<string> { "3.2.0" };
+    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1" };
 
     private ComponentMaker componentMaker;
     private EventLoader eventLoader;
@@ -119,8 +119,8 @@ public class TourMaker : MonoBehaviour
 
         if (!VersionCheck.IsCompatible(currentTour.header.version, targetVersion, compatibleVersions))
         {
-            if (errorText != null) errorText.text = "Tour JSON File not version " + targetVersion;
-            Debug.LogError("Tour JSON File not version " + targetVersion);
+            if (errorText != null) errorText.text = "Tour JSON file is not version " + targetVersion + ".";
+            Debug.LogError("Tour JSON file is not version " + targetVersion + ".");
             yield break;
         }
 

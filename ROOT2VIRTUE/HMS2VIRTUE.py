@@ -740,7 +740,7 @@ print(
 
 output = {
     "header": {
-        "version": "3.2.1",
+        "version": "3.2.2",
         "experiment": "Hall C HMS",
         "energy_unit": "GeV",
         "color_bar": "Log",

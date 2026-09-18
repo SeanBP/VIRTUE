@@ -67,11 +67,11 @@ public class EventLoader : MonoBehaviour
 
     public string filename = "NCDIS_Q2=100_Pythia8.json";
     private string lastFilename = "NCDIS_Q2=100_Pythia8.json";
-    private string targetVersion = "3.2.1";
+    private string targetVersion = "3.2.2";
     // 3.2.0 event files remain compatible: the only change since then is the
     // header field rename (experiment -> title), which this parser already
     // accepts via the legacy experiment alias above.
-    private List<string> compatibleVersions = new List<string> { "3.2.0" };
+    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1" };
     private float trackSegmentLength = 0.05f;
     public float speed = 5f; //speed of light is [speed] m/s
     public InputField speedField;
@@ -423,8 +423,8 @@ public class EventLoader : MonoBehaviour
         }
         else
         {
-            errorText.text = "Event JSON File not version " + targetVersion;
-            UnityEngine.Debug.LogError("Event JSON File not version " + targetVersion);
+            errorText.text = "Event JSON file is not version " + targetVersion + ".";
+            UnityEngine.Debug.LogError("Event JSON file is not version " + targetVersion + ".");
         }
 
         start_time = Time.time;
