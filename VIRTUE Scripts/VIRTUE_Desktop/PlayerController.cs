@@ -188,10 +188,24 @@ public class PlayerController : MonoBehaviour
             else if (currentAngle < 0)
                 currentAngle += 2 * Mathf.PI;
 
+            // Height maps to a pure elevation angle on the sphere of radius
+            // `radius` (the true distance to the origin), rather than a raw
+            // world-space Y offset -- an offset-based elevation has an
+            // increasingly steep horizontal response as it nears +/-radius
+            // and then goes fully flat (clamped) beyond it, which reads as
+            // a snap. An angle has no such singularity: the Height slider's
+            // full range maps smoothly across the whole tilt range, and
+            // capping short of a true 90 degrees avoids the camera ever
+            // sitting exactly at the pole, where LookAt's orientation is
+            // ambiguous and can flip abruptly.
+            const float maxElevationDeg = 85f;
+            float elevationRad = Mathf.Clamp(height, -15f, 15f) / 15f * maxElevationDeg * Mathf.Deg2Rad;
+            float horizontalRadius = radius * Mathf.Cos(elevationRad);
+
             player.transform.position = new Vector3(
-                radius * Mathf.Cos(currentAngle),
-                height,
-                radius * Mathf.Sin(currentAngle)
+                horizontalRadius * Mathf.Cos(currentAngle),
+                radius * Mathf.Sin(elevationRad),
+                horizontalRadius * Mathf.Sin(currentAngle)
             );
         }
         else
