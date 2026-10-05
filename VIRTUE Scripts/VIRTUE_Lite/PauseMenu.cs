@@ -21,8 +21,9 @@ public class PauseMenu : MonoBehaviour
     public GameObject controls;
     public GameObject menuText;
 
-    // Opening the manual currently breaks on macOS Steam builds; deactivate it
-    // there at startup instead of remembering to do it by hand each build.
+    // Unlike Desktop, Lite isn't distributed through Steam, so the
+    // macOS-Steam manual-opening breakage this button works around there
+    // doesn't apply here -- it stays active on every platform.
     public GameObject manualButton;
 
     public bool HUDActive = true;
@@ -60,10 +61,6 @@ public class PauseMenu : MonoBehaviour
         currentActiveMenu = null;
         fsText.text = Screen.fullScreen ? "Exit Fullscreen" : "Enter Fullscreen";
         Pause();
-
-#if UNITY_STANDALONE_OSX
-        if (manualButton != null) manualButton.SetActive(false);
-#endif
     }
 
     private void InitializeMenuPositions()
