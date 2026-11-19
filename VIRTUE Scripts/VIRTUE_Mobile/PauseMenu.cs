@@ -9,6 +9,7 @@ using static System.Net.Mime.MediaTypeNames;
 using System.Diagnostics;
 using UnityEngine.EventSystems;
 using System.Security.Permissions;
+using VirtueCore.Shared;
 #pragma warning disable 0618
 
 public class PauseMenu : MonoBehaviour
@@ -70,6 +71,8 @@ public class PauseMenu : MonoBehaviour
 
         SetMenu(navigationMenu, initialMenuPositions[navigationMenu] + new Vector3(0, containerOffset, 0));
         GameIsPaused = false;
+
+        ErrorMessage.EnableClickToDismiss(errorText);
     }
 
     private void InitializeMenuPositions()
@@ -106,6 +109,9 @@ public class PauseMenu : MonoBehaviour
     {
         if (isTransitioning)
             return;
+
+        // A submenu is about to slide away (closed or swapped for another).
+        DropdownUtil.CloseOpenDropdowns();
 
         if (currentActiveMenu == menu)
         {
@@ -153,7 +159,10 @@ public class PauseMenu : MonoBehaviour
 
     void Update()
     {
-        
+        // Android's back button arrives as KeyCode.Escape.
+        if (Input.GetKeyDown(KeyCode.Escape))
+            ErrorMessage.TryDismiss(errorText);
+
         if (isTransitioning)
             return;
 
@@ -239,6 +248,9 @@ public class PauseMenu : MonoBehaviour
     {
         if (isTransitioning)
             return;
+
+        DropdownUtil.CloseOpenDropdowns();
+
         StartCoroutine(SlideMenu(navigationMenu, initialMenuPositions[navigationMenu] + new Vector3(0, containerOffset, 0)));
 
 

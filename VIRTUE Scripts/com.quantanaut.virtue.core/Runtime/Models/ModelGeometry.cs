@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using VirtueCore.Shared;
 
 namespace VirtueCore.Models
 {
@@ -99,7 +100,7 @@ namespace VirtueCore.Models
             Color color = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
 
             material.color = color;
-            material.renderQueue = renderQueue;
+            material.renderQueue = RenderOrder.DetectorQueue(renderQueue);
 
             prism.GetComponent<MeshRenderer>().sharedMaterial = material;
 
@@ -173,7 +174,7 @@ namespace VirtueCore.Models
             // material
             Material material = new Material(Shader.Find("Transparent/Diffuse"));
             material.color = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
-            material.renderQueue = renderQueue;
+            material.renderQueue = RenderOrder.DetectorQueue(renderQueue);
             spheroid.GetComponent<Renderer>().material = material;
 
             // wireframe circles
@@ -475,7 +476,7 @@ namespace VirtueCore.Models
             Color color = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
 
             material.color = color;
-            material.renderQueue = renderQueue;
+            material.renderQueue = RenderOrder.DetectorQueue(renderQueue);
 
             gameObject.GetComponent<MeshRenderer>().sharedMaterial = material;
 

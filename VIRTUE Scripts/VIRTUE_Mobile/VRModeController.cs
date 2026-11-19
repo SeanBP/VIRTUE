@@ -53,16 +53,35 @@ public class VRModeController : MonoBehaviour
     // correction being applied to compensate.
     public float vrFieldOfView = 90f;
 
+    // Hold-to-move along the gaze direction while in VR mode: volume-up
+    // moves forward, volume-down moves back. Speeds and limits are ratios of
+    // the camera-to-model viewing distance at the moment VR mode is entered
+    // (the same reference stereoEyeSeparationRatio uses), so movement feels
+    // the same regardless of model scale or the zoom level the user left
+    // normal mode at. Unverified: these are starting points that need
+    // on-device tuning for comfort.
+    //
+    // Top speed, in view-distances per second.
+    public float moveSpeedRatio = 0.25f;
+    // Time (seconds) to ease from stopped to top speed and back. A short ramp
+    // instead of an instant start/stop reduces motion sickness.
+    public float moveEaseSeconds = 0.3f;
+    // Furthest the head may get from the world origin (where the model is
+    // centered), in view-distances, so the user can't fly off into empty
+    // space and lose the model entirely.
+    public float maxDistanceRatio = 3f;
+
     // How long the calibration dots stay visible after eyeSeparation was
     // last changed, so they read as "while adjusting" without needing
     // separate start/end event wiring.
     private const float calibrationDotsHoldSeconds = 1f;
 
-    // How much eyeSeparation changes per volume button press. Android-only.
-    // UnityEngine.Input has no way to read hardware volume keys, so this is
-    // driven by a native plugin (Assets/Plugins/Android/VRVolumeActivity.java)
-    // that intercepts them at the Activity level and forwards them via
-    // OnVolumeUpPressed/OnVolumeDownPressed below.
+    // How much eyeSeparation changes per volume button press in calibration
+    // mode. Android-only. UnityEngine.Input has no way to read hardware
+    // volume keys, so this is driven by a native plugin
+    // (Assets/Plugins/Android/VRVolumeActivity.java) that intercepts them at
+    // the Activity level while VR mode is active and forwards them via the
+    // OnVolume*Pressed/Released handlers below.
     private const float eyeSeparationStep = 0.01f;
 
     // Bounds for eyeSeparation. These previously came from the on-screen
@@ -85,6 +104,21 @@ public class VRModeController : MonoBehaviour
     private float mainCameraFovBeforeVR;
     private float stereoEyeSeparation;
 
+    // Volume-key state. In movement mode, holding a key moves; in
+    // calibration mode, each press adjusts eyeSeparation. Pressing both keys
+    // together toggles between the two modes (a "chord"), which works with
+    // the phone inside a headset where the on-screen toggle can't be reached.
+    private bool volumeUpHeld = false;
+    private bool volumeDownHeld = false;
+    // Set when both keys were down together during the current press; keeps
+    // the chord's individual key presses/releases from also moving or
+    // adjusting, until both keys are released again.
+    private bool volumeChordActive = false;
+    private bool calibrationModeActive = false;
+
+    private float viewDistanceAtEntry;
+    private float moveVelocity = 0f;
+
     void Update()
     {
         if (!vrModeActive) return;
@@ -94,6 +128,8 @@ public class VRModeController : MonoBehaviour
             Quaternion current = ConvertGyroRotation(Input.gyro.attitude);
             mainCamera.transform.rotation = gyroCalibration * current;
         }
+
+        UpdateMovement();
 
         // Offset each eye camera symmetrically from the shared head
         // position along its own local right axis, so mainCamera (left
@@ -107,7 +143,9 @@ public class VRModeController : MonoBehaviour
         vrCamera.transform.position = vrHeadPosition + eyeOffset;
         vrCamera.transform.rotation = mainCamera.transform.rotation;
 
-        if (calibrationDotsTimer > 0f)
+        // While calibration mode is on, the dots stay up the whole time
+        // instead of on SetEyeSeparation's short hold timer.
+        if (!calibrationModeActive && calibrationDotsTimer > 0f)
         {
             calibrationDotsTimer -= Time.deltaTime;
             if (calibrationDotsTimer <= 0f)
@@ -130,17 +168,95 @@ public class VRModeController : MonoBehaviour
     }
 
     // Called by the native Android plugin (VRVolumeActivity.java, under
-    // Assets/Plugins/Android) via UnitySendMessage when the hardware volume
-    // buttons are pressed. The string parameter is required by
-    // UnitySendMessage's calling convention even though it's unused here.
+    // Assets/Plugins/Android) via UnitySendMessage when a hardware volume
+    // button goes down or up (auto-repeat while held is filtered out on the
+    // Java side). The string parameter is required by UnitySendMessage's
+    // calling convention even though it's unused here.
+    //
+    // Movement mode (default): hold up = forward, hold down = back, along
+    // the gaze direction (applied each frame in UpdateMovement).
+    // Calibration mode: each up/down press nudges eyeSeparation, applied on
+    // release so a two-key chord never also counts as an adjustment.
+    // Both keys together: toggle between the two modes.
     public void OnVolumeUpPressed(string message)
     {
-        if (vrModeActive) AdjustEyeSeparation(eyeSeparationStep);
+        if (!vrModeActive) return;
+        volumeUpHeld = true;
+        if (volumeDownHeld) OnVolumeChord();
     }
 
     public void OnVolumeDownPressed(string message)
     {
-        if (vrModeActive) AdjustEyeSeparation(-eyeSeparationStep);
+        if (!vrModeActive) return;
+        volumeDownHeld = true;
+        if (volumeUpHeld) OnVolumeChord();
+    }
+
+    public void OnVolumeUpReleased(string message)
+    {
+        if (!volumeUpHeld) return;
+        volumeUpHeld = false;
+        if (vrModeActive && calibrationModeActive && !volumeChordActive)
+            AdjustEyeSeparation(eyeSeparationStep);
+        EndChordIfReleased();
+    }
+
+    public void OnVolumeDownReleased(string message)
+    {
+        if (!volumeDownHeld) return;
+        volumeDownHeld = false;
+        if (vrModeActive && calibrationModeActive && !volumeChordActive)
+            AdjustEyeSeparation(-eyeSeparationStep);
+        EndChordIfReleased();
+    }
+
+    private void OnVolumeChord()
+    {
+        if (volumeChordActive) return;
+        volumeChordActive = true;
+        ToggleCalibrationMode();
+    }
+
+    private void EndChordIfReleased()
+    {
+        if (!volumeUpHeld && !volumeDownHeld) volumeChordActive = false;
+    }
+
+    private void ReleaseVolumeKeys()
+    {
+        volumeUpHeld = false;
+        volumeDownHeld = false;
+        volumeChordActive = false;
+    }
+
+    // If the app loses focus mid-press (notification shade, app switch),
+    // the matching key-up may never arrive -- don't keep moving forever.
+    void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus) ReleaseVolumeKeys();
+    }
+
+    void OnDestroy()
+    {
+        SetAndroidVolumeInterception(false);
+    }
+
+    // Switches the volume keys between movement and eye-separation
+    // calibration. Bind to a button on the VR overlay; also triggered by
+    // pressing both volume keys together. Calibration mode stays on until
+    // toggled off again (or VR mode is exited).
+    public void ToggleCalibrationMode()
+    {
+        if (!vrModeActive) return;
+        SetCalibrationMode(!calibrationModeActive);
+    }
+
+    private void SetCalibrationMode(bool active)
+    {
+        calibrationModeActive = active;
+        calibrationDotsTimer = 0f;
+        calibrationDotLeft.gameObject.SetActive(active);
+        calibrationDotRight.gameObject.SetActive(active);
     }
 
     // Volume-button shortcut for SetEyeSeparation.
@@ -148,6 +264,48 @@ public class VRModeController : MonoBehaviour
     {
         float newValue = Mathf.Clamp(eyeSeparation + delta, eyeSeparationMin, eyeSeparationMax);
         SetEyeSeparation(newValue);
+    }
+
+    // Moves the shared head position (which both eye cameras are offset
+    // from in Update) along the current gaze direction while a volume key
+    // is held in movement mode, easing in and out over moveEaseSeconds.
+    private void UpdateMovement()
+    {
+        float input = 0f;
+        if (!calibrationModeActive && !volumeChordActive)
+            input = (volumeUpHeld ? 1f : 0f) - (volumeDownHeld ? 1f : 0f);
+
+        float maxSpeed = moveSpeedRatio * viewDistanceAtEntry;
+        float acceleration = moveEaseSeconds > 0f ? maxSpeed / moveEaseSeconds : float.PositiveInfinity;
+        moveVelocity = Mathf.MoveTowards(moveVelocity, input * maxSpeed, acceleration * Time.deltaTime);
+
+        if (moveVelocity == 0f) return;
+
+        vrHeadPosition += mainCamera.transform.forward * (moveVelocity * Time.deltaTime);
+
+        float maxDistance = maxDistanceRatio * viewDistanceAtEntry;
+        if (vrHeadPosition.magnitude > maxDistance)
+            vrHeadPosition = vrHeadPosition.normalized * maxDistance;
+    }
+
+    // Tells the Android plugin whether to intercept the volume keys. Only
+    // while VR mode is active -- otherwise they reach Android normally and
+    // change the phone's volume as usual.
+    private static void SetAndroidVolumeInterception(bool active)
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        try
+        {
+            using (var activityClass = new AndroidJavaClass("com.Quantanaut.VIRTUE.VRVolumeActivity"))
+            {
+                activityClass.CallStatic("setVRModeActive", active);
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning("[VRMode] Could not toggle volume-key interception: " + e.Message);
+        }
+#endif
     }
 
     // Recomputes each eye's square viewport (sized to exactly fill the
@@ -241,6 +399,14 @@ public class VRModeController : MonoBehaviour
         vrHeadPosition = mainCamera.transform.position;
         stereoEyeSeparation = stereoEyeSeparationRatio * playerController.player.transform.position.magnitude;
 
+        // Reference distance for movement speed/limits. Floored so a head
+        // that somehow starts at the origin still gets usable movement.
+        viewDistanceAtEntry = Mathf.Max(playerController.player.transform.position.magnitude, vrHeadPosition.magnitude, 0.01f);
+        moveVelocity = 0f;
+        ReleaseVolumeKeys();
+        calibrationModeActive = false;
+        SetAndroidVolumeInterception(true);
+
         // Recenter the gyro so "forward" at the moment VR mode is entered
         // matches the app's default view direction, instead of whatever
         // absolute heading the phone happens to be pointed at.
@@ -296,6 +462,11 @@ public class VRModeController : MonoBehaviour
     {
         if (!vrModeActive) return;
         vrModeActive = false;
+
+        SetAndroidVolumeInterception(false);
+        ReleaseVolumeKeys();
+        moveVelocity = 0f;
+        calibrationModeActive = false;
 
         vrCamera.gameObject.SetActive(false);
         backgroundCamera.gameObject.SetActive(false);

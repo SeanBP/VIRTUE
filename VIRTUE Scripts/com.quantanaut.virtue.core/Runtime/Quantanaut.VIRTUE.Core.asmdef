@@ -1,7 +1,10 @@
 {
     "name": "Quantanaut.VIRTUE.Core",
     "rootNamespace": "",
-    "references": [],
+    "references": [
+        "Unity.TextMeshPro",
+        "UnityEngine.UI"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

@@ -4,6 +4,9 @@
   "displayName": "VIRTUE Core",
   "description": "Shared JSON schemas and geometry/physics generation for the VIRTUE Desktop, VR, Mobile, and Lite Unity projects.",
   "unity": "6000.5",
+  "dependencies": {
+    "com.unity.ugui": "2.5.0"
+  },
   "author": {
     "name": "Quantanaut"
   }

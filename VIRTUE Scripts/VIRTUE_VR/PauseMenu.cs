@@ -9,6 +9,7 @@ using static System.Net.Mime.MediaTypeNames;
 using System.Diagnostics;
 using UnityEngine.EventSystems;
 using TMPro;
+using VirtueCore.Shared;
 #pragma warning disable 0618
 
 public class PauseMenu : MonoBehaviour
@@ -60,7 +61,26 @@ public class PauseMenu : MonoBehaviour
         InitializeMenuPositions();
         MoveMenusToUnselectedPositions();
         currentActiveMenu = null;
-  
+
+        ErrorMessage.EnableClickToDismiss(errorText);
+
+        componentMaker = FindAnyObjectByType<ComponentMaker>();
+        eventLoader = FindAnyObjectByType<EventLoader>();
+        tourMaker = FindAnyObjectByType<TourMaker>();
+    }
+
+    private ComponentMaker componentMaker;
+    private EventLoader eventLoader;
+    private TourMaker tourMaker;
+
+    // Re-reads the model/event/tour folders so files added or removed while
+    // the app is running appear in (or drop out of) the dropdowns. Called
+    // whenever a menu opens.
+    private void RefreshFileLists()
+    {
+        if (componentMaker != null) componentMaker.RefreshFileList();
+        if (eventLoader != null) eventLoader.RefreshFileList();
+        if (tourMaker != null) tourMaker.RefreshFileList();
     }
 
     
@@ -97,6 +117,11 @@ public class PauseMenu : MonoBehaviour
     }
     private void Update()
     {
+        // Keyboard shortcut (e.g. when testing on desktop); in the headset,
+        // pointing at the message and clicking it clears it.
+        if (Input.GetKeyDown(KeyCode.Escape))
+            ErrorMessage.TryDismiss(errorText);
+
         // Check if eventDropdown is opened
         if (
         (IsDropdownOpen(eventDropdown) && IsDropdownOpen(modelDropdown)) ||
@@ -127,6 +152,9 @@ public class PauseMenu : MonoBehaviour
         if (isTransitioning)
             return;
 
+        // A submenu is about to slide away (closed or swapped for another).
+        DropdownUtil.CloseOpenDropdowns();
+
         if (currentActiveMenu == menu)
         {
             StartCoroutine(SlideMenu(currentActiveMenu, initialMenuPositions[menu] + new Vector3(offset, 0, 0)));
@@ -141,6 +169,7 @@ public class PauseMenu : MonoBehaviour
 
         }
 
+        RefreshFileLists();
         currentActiveMenu = menu;
         StartCoroutine(SlideMenu(currentActiveMenu, initialMenuPositions[menu]));
 
@@ -204,6 +233,9 @@ public class PauseMenu : MonoBehaviour
     {
         if (isTransitioning)
             return;
+
+        DropdownUtil.CloseOpenDropdowns();
+
         StartCoroutine(SlideMenu(navigationMenu, initialMenuPositions[navigationMenu] + new Vector3(0, -1100f, 0)));
 
 

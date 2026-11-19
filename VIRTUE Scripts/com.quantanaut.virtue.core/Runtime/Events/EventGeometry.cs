@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using VirtueCore.Shared;
 
 namespace VirtueCore.Events
 {
@@ -30,6 +31,7 @@ namespace VirtueCore.Events
             material.DisableKeyword("_ALPHATEST_ON");
             material.DisableKeyword("_ALPHABLEND_ON");
             material.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+            material.renderQueue = RenderOrder.EventQueue;
             return material;
         }
 
@@ -92,7 +94,7 @@ namespace VirtueCore.Events
 
             // Set particle material and color
             Material particleMaterial = makeMaterial(particleData.color_rgba);
-            particleMaterial.renderQueue = -1;
+            particleMaterial.renderQueue = RenderOrder.EventQueue;
             particle.GetComponent<MeshRenderer>().sharedMaterial = particleMaterial;
 
             // Store the final position and direction. ip.x is negated to match
@@ -142,6 +144,7 @@ namespace VirtueCore.Events
                 hitObject.GetComponent<Renderer>().enabled = false;
 
                 Material material = makeMaterial(JsonHitObject.color_rgba);
+                material.renderQueue = RenderOrder.EventQueue;
 
                 hitObject.GetComponent<MeshRenderer>().sharedMaterial = material;
                 eventHitObjects[j] = hitObject;
@@ -174,7 +177,7 @@ namespace VirtueCore.Events
 
                 Material material = makeMaterial(JsonBlockObject.color_rgba);
 
-                material.renderQueue = -1;
+                material.renderQueue = RenderOrder.EventQueue;
                 eventBlockObjects[j].GetComponent<MeshRenderer>().sharedMaterial = material;
             }
             return (eventBlockObjects, blockTimeData);
@@ -220,6 +223,7 @@ namespace VirtueCore.Events
                 eventClusterObjects[j].GetComponent<Renderer>().enabled = false;
 
                 Material material = makeMaterial(JsonClusterObject.color_rgba);
+                material.renderQueue = RenderOrder.EventQueue;
 
                 eventClusterObjects[j].GetComponent<MeshRenderer>().sharedMaterial = material;
             }
@@ -261,6 +265,7 @@ namespace VirtueCore.Events
                 MeshRenderer renderer = eventJetObjects[j].AddComponent<MeshRenderer>();
 
                 Material material = makeMaterial(JsonJetObject.color_rgba);
+                material.renderQueue = RenderOrder.EventQueue;
 
                 renderer.material = material;
 
@@ -377,7 +382,7 @@ namespace VirtueCore.Events
 
                         lineRenderer.startWidth = 0.04f;
                         lineRenderer.endWidth = 0.04f;
-                        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+                        lineRenderer.material = new Material(Shader.Find("Sprites/Default")) { renderQueue = RenderOrder.EventQueue };
                         lineRenderer.startColor = color;
                         lineRenderer.endColor = color;
 
@@ -453,7 +458,7 @@ namespace VirtueCore.Events
 
                         lineRenderer.startWidth = 0.04f;
                         lineRenderer.endWidth = 0.04f;
-                        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+                        lineRenderer.material = new Material(Shader.Find("Sprites/Default")) { renderQueue = RenderOrder.EventQueue };
                         lineRenderer.startColor = color;
                         lineRenderer.endColor = color;
 

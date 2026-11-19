@@ -65,11 +65,11 @@ public class EventLoader : MonoBehaviour
 
     private string filename = "NCDIS_Q2=100_Pythia8";
     private string lastFilename = "NCDIS_Q2=100_Pythia8";
-    private string targetVersion = "3.2.2";
+    private string targetVersion = "3.2.3";
     // 3.2.0 event files remain compatible: the only change since then is the
     // header field rename (experiment -> title), which this parser already
     // accepts via the legacy experiment alias above.
-    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1" };
+    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1", "3.2.2" };
     private float trackSegmentLength = 0.05f;
     public float speed = 5; //speed of light is [speed] m/s
     public InputField speedField;
@@ -376,10 +376,52 @@ public class EventLoader : MonoBehaviour
     // header.event_file names an event) that just want a named event file
     // loaded normally. This event's own header.model_file (if any) is not
     // chased, since the model file that led here already takes precedence.
+    //
+    // The event dropdown is switched to the loaded file. If the reference
+    // doesn't match any available event file, the previous event is cleared
+    // and the event is left empty (dropdown blank) instead. Resolving the
+    // name here also matters on Mobile specifically: fileNames are
+    // Resources names without an extension, and LoadJSONFile falls back to
+    // the first file in Resources/Events when filename matches nothing, so
+    // a header reference like "foo.json" (or a missing file) used to load
+    // an unrelated event.
     public void LoadEventFile(string newFilename)
     {
-        filename = newFilename;
+        int index = FileSelection.FindIndex(fileNames, newFilename);
+        if (index < 0)
+        {
+            UnityEngine.Debug.LogWarning($"Event file \"{newFilename}\" not found -- leaving the event empty.");
+            CancelAndClearCurrentLoad();
+            ShowEmptyEvent();
+            FileSelection.ShowSelection(fileDropdown, -1);
+            return;
+        }
+
+        FileSelection.ShowSelection(fileDropdown, index);
+        filename = fileNames[index];
         LoadFile(chaseCompanion: false);
+    }
+
+    // Puts the loader into a "no event loaded" state: one blank event slot
+    // (rather than zero, since Update() and the navigation buttons index
+    // infoTexts/hitObjects/etc. at iEvt every frame) and a cleared HUD.
+    // Callers are responsible for having already destroyed the previous
+    // event's objects (CancelAndClearCurrentLoad).
+    private void ShowEmptyEvent()
+    {
+        InitializeEventArrays(1);
+        headerExperiment = "";
+        color_bar = "";
+        SetHUD(true);
+
+        if (errorText.text.StartsWith("Reading event file") || errorText.text.StartsWith("Loading events"))
+            errorText.text = "";
+
+        // Cleared rather than left at the previous file, so selecting any
+        // dropdown entry afterward -- including the one that was loaded
+        // before -- actually loads it.
+        filename = "";
+        lastFilename = null;
     }
 
     private Material MakeMaterial(float[] color_rgba)

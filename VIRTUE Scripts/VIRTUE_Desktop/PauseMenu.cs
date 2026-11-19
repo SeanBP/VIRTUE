@@ -4,6 +4,7 @@ using UnityEngine;
 using System.IO;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
+using VirtueCore.Shared;
 #pragma warning disable 0618
 
 public class PauseMenu : MonoBehaviour
@@ -49,6 +50,10 @@ public class PauseMenu : MonoBehaviour
     private bool isMuted = false;
     private float previousVolume = 0.05f;
 
+    private TourMaker tourMaker;
+    private ComponentMaker componentMaker;
+    private EventLoader eventLoader;
+
     public void ChangeVolume(float volume)
     {
         AudioSource.GetComponent<AudioSource>().volume = volume;
@@ -64,6 +69,14 @@ public class PauseMenu : MonoBehaviour
         currentActiveMenu = null;
         fsText.text = Screen.fullScreen ? "Exit Fullscreen" : "Enter Fullscreen";
         Pause();
+
+        // Found after the initial Pause() above on purpose: that first
+        // Pause() runs before the loaders have built their lists, so its
+        // RefreshFileLists() call is skipped (these are still null).
+        tourMaker = FindAnyObjectByType<TourMaker>();
+        componentMaker = FindAnyObjectByType<ComponentMaker>();
+        eventLoader = FindAnyObjectByType<EventLoader>();
+        ErrorMessage.EnableClickToDismiss(errorText);
 
 #if UNITY_STANDALONE_OSX
         if (manualButton != null) manualButton.SetActive(false);
@@ -107,6 +120,9 @@ public class PauseMenu : MonoBehaviour
     {
         if (isTransitioning) return;
 
+        // A submenu is about to slide away (closed or swapped for another).
+        DropdownUtil.CloseOpenDropdowns();
+
         if (currentActiveMenu == menu)
         {
             StartCoroutine(SlideMenu(currentActiveMenu, initialMenuPositions[menu] + new Vector3(offset, 0, 0)));
@@ -119,8 +135,19 @@ public class PauseMenu : MonoBehaviour
             StartCoroutine(SlideMenu(currentActiveMenu, initialMenuPositions[currentActiveMenu] + new Vector3(offset, 0, 0)));
         }
 
+        RefreshFileLists();
         currentActiveMenu = menu;
         StartCoroutine(SlideMenu(currentActiveMenu, initialMenuPositions[menu]));
+    }
+
+    // Re-reads the model/event/tour folders so files added or removed while
+    // the app is running appear in (or drop out of) the dropdowns. Called
+    // whenever the menu or one of its submenus opens.
+    private void RefreshFileLists()
+    {
+        if (componentMaker != null) componentMaker.RefreshFileList();
+        if (eventLoader != null) eventLoader.RefreshFileList();
+        if (tourMaker != null) tourMaker.RefreshFileList();
     }
 
     private IEnumerator SlideMenu(GameObject menu, Vector3 targetPosition)
@@ -140,13 +167,19 @@ public class PauseMenu : MonoBehaviour
 
     void Update()
     {
+        // Escape first clears an error message if one is showing; only when
+        // there's nothing to clear does it toggle the menu as usual.
+        bool escapePressed = Input.GetKeyDown(KeyCode.Escape);
+        if (escapePressed && ErrorMessage.TryDismiss(errorText))
+            escapePressed = false;
+
         if (!inTour)
         {
             fsText.text = Screen.fullScreen ? "Exit Fullscreen" : "Enter Fullscreen";
 
             if (isTransitioning) return;
 
-            if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.M) || Input.GetKeyDown(KeyCode.Escape))
+            if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.M) || escapePressed)
             {
                 menuText.SetActive(false);
                 if (GameIsPaused) Resume();
@@ -163,7 +196,7 @@ public class PauseMenu : MonoBehaviour
         {
             if (isTransitioning) return;
 
-            if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.M) || Input.GetKeyDown(KeyCode.Escape))
+            if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.M) || escapePressed)
             {
                 if (GameIsPaused) Resume();
                 else Pause();
@@ -190,10 +223,21 @@ public class PauseMenu : MonoBehaviour
         }
     }
 
+    // Wired to the tour start button after TourMaker.StartTour, so
+    // TourMaker has already decided whether the tour could be opened.
     public void StartTour()
     {
+        if (tourMaker != null && !tourMaker.TourActive) return;
+
         CloseTexts();
         inTour = true;
+    }
+
+    // Called by TourMaker when a tour fails to open, in case this ever runs
+    // before TourMaker.StartTour instead of after.
+    public void CancelTour()
+    {
+        inTour = false;
     }
 
     public void Manual()
@@ -221,6 +265,8 @@ public class PauseMenu : MonoBehaviour
     void Resume()
     {
         if (isTransitioning) return;
+
+        DropdownUtil.CloseOpenDropdowns();
 
         GameObject navMenu = inTour ? tourNavigationMenu : navigationMenu;
 
@@ -250,6 +296,8 @@ public class PauseMenu : MonoBehaviour
         if (isTransitioning) return;
 
         GameObject navMenu = inTour ? tourNavigationMenu : navigationMenu;
+
+        RefreshFileLists();
 
         StartCoroutine(
             SlideMenu(

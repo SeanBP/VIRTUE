@@ -38,11 +38,11 @@ public class ComponentMaker : MonoBehaviour
     private float scale = 1.0f;
     private float lineThickness = 0.01f;
     public UnityEngine.UI.Text detectorText;
-    private string targetVersion = "3.2.2";
+    private string targetVersion = "3.2.3";
     // 3.2.0 model files remain compatible: the only change since then is the
     // header field rename (detector -> title), which this parser already
     // accepts via the legacy detector alias above.
-    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1" };
+    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1", "3.2.2" };
     private List<string> fileNames = new List<string>();
     private List<string> displayNames = new List<string>();
     public TMP_Dropdown fileDropdown;
@@ -562,20 +562,52 @@ public class ComponentMaker : MonoBehaviour
     // afterward for a tour-style reveal. This model's own header.event_file
     // (if any) is not chased, since the event file that led here already
     // takes precedence.
+    //
+    // The model dropdown is switched to the loaded file without firing its
+    // onValueChanged (which is wired to OnFileSelected + LoadFile and so
+    // used to start a second, companion-chasing load). If the reference
+    // doesn't match any available model, the previous model is cleared and
+    // the model is left empty (dropdown blank) -- previously BuildSimModel
+    // would just rebuild whatever the dropdown still had selected.
     public void LoadModelFile(string newFilename)
     {
-        filename = newFilename;
-
-        int index = fileNames.FindIndex(f =>
-        string.Equals(f, Path.GetFileNameWithoutExtension(newFilename),
-        StringComparison.OrdinalIgnoreCase));
-
-        if (index >= 0)
+        int index = FileSelection.FindIndex(fileNames, newFilename);
+        if (index < 0)
         {
-            fileDropdown.value = index;
+            ClearMissingModel(newFilename);
+            return;
         }
 
+        FileSelection.ShowSelection(fileDropdown, index);
+        filename = fileNames[index];
         LoadFile(chaseCompanion: false);
+    }
+
+    // Empties the scene of the current model and its title text, for a
+    // companion reference that points to a model that doesn't exist.
+    private void ClearMissingModel(string missingFilename)
+    {
+        UnityEngine.Debug.LogWarning($"Model file \"{missingFilename}\" not found -- leaving the model empty.");
+
+        // Also invalidates any FBX load still in flight (modelLoadToken).
+        ResetModelState();
+        loadingModel = false;
+        activeModel = null;
+
+        detectorText.text = "";
+        detectorPartAlphas.Clear();
+        if (errorText != null && errorText.text.StartsWith("Loading model"))
+            errorText.text = "";
+
+        explodeSlider.value = 1f;
+        lastSliderValue = 1f;
+
+        // Cleared rather than left at the previous file, so selecting any
+        // dropdown entry afterward -- including the one that was loaded
+        // before -- actually loads it.
+        filename = "";
+        lastFilename = null;
+        FileSelection.ShowSelection(fileDropdown, -1);
     }
 
     public void ResetModelState()

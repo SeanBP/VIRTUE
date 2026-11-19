@@ -20,10 +20,10 @@ public class TourMaker : MonoBehaviour
     private List<string> tourFiles = new List<string>();
     private TourFile currentTour;
     private int currentSceneIndex = 0;
-    private string targetVersion = "3.2.2";
+    private string targetVersion = "3.2.3";
     // 3.2.0 tour files remain compatible -- see EventLoader/ComponentMaker's
     // compatibleVersions for why.
-    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1" };
+    private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1", "3.2.2" };
 
     private ComponentMaker componentMaker;
     private EventLoader eventLoader;
@@ -81,12 +81,38 @@ public class TourMaker : MonoBehaviour
         tourDropdown.AddOptions(displayNames);
     }
 
+    // Re-reads the tour list from disk (PauseMenu calls this whenever a
+    // menu opens), so tours added or removed while the app is running show
+    // up. Keeps the currently selected tour selected if it still exists.
+    public void RefreshFileList()
+    {
+        int current = tourDropdown.value;
+        string selected = (current >= 0 && current < tourFiles.Count) ? tourFiles[current] : null;
+
+        LoadTourFilesIntoDropdown();
+
+        int index = selected == null
+            ? -1
+            : tourFiles.FindIndex(f => string.Equals(f, selected, System.StringComparison.OrdinalIgnoreCase));
+        tourDropdown.SetValueWithoutNotify(index >= 0 ? index : 0);
+        tourDropdown.RefreshShownValue();
+    }
+
     public void StartTour()
     {
-
         int index = tourDropdown.value;
+        if (index < 0 || index >= tourFiles.Count)
+            return;
 
-        string path = tourFiles[index];
+        // The tour file is read and checked here, before any menu is hidden.
+        // This used to happen after the normal menu was already hidden, so a
+        // missing (deleted since the list was built), unreadable or
+        // wrong-version tour file left the user with no menu at all.
+        TourFile tour = ReadTourFile(index);
+        if (tour == null)
+            return;
+
+        currentTour = tour;
 
         if (activeTourLoadCoroutine != null)
         {
@@ -95,34 +121,66 @@ public class TourMaker : MonoBehaviour
         }
 
         tourLoadToken++;
-        activeTourLoadCoroutine = StartCoroutine(LoadTourCoroutine(path, tourLoadToken));
+        activeTourLoadCoroutine = StartCoroutine(LoadTourCoroutine(tourLoadToken));
     }
 
-    private IEnumerator LoadTourCoroutine(string path, int token)
+    // Reads and validates the tour at tourFiles[index]. Shows an error and
+    // returns null if it can't be used. A file that no longer exists is also
+    // removed from the tour list.
+    private TourFile ReadTourFile(int index)
     {
-        string jsonText = "";
-        normalMenu.SetActive(false);
+        string path = tourFiles[index];
+
+        if (!File.Exists(path))
+        {
+            ShowError("Tour file \"" + Path.GetFileNameWithoutExtension(path) + "\" no longer exists.");
+            RemoveTourOption(index);
+            return null;
+        }
+
+        TourFile tour;
         try
         {
-            using (StreamReader reader = new StreamReader(path))
-            {
-                jsonText = reader.ReadToEnd();
-            }
-
-            currentTour = JsonUtility.FromJson<TourFile>(jsonText);
+            tour = JsonUtility.FromJson<TourFile>(File.ReadAllText(path));
         }
         catch (System.Exception e)
         {
-            if (errorText != null) errorText.text = "Error reading tour file: " + e.Message;
-            yield break;
+            ShowError("Error reading tour file: " + e.Message);
+            return null;
         }
 
-        if (!VersionCheck.IsCompatible(currentTour.header.version, targetVersion, compatibleVersions))
+        if (tour == null || tour.header == null || tour.scenes == null)
         {
-            if (errorText != null) errorText.text = "Tour JSON file is not version " + targetVersion + ".";
-            Debug.LogError("Tour JSON file is not version " + targetVersion + ".");
-            yield break;
+            ShowError("Error reading tour file: not a valid tour.");
+            return null;
         }
+
+        if (!VersionCheck.IsCompatible(tour.header.version, targetVersion, compatibleVersions))
+        {
+            ShowError("Tour JSON file is not version " + targetVersion + ".");
+            Debug.LogError("Tour JSON file is not version " + targetVersion + ".");
+            return null;
+        }
+
+        return tour;
+    }
+
+    private void RemoveTourOption(int index)
+    {
+        tourFiles.RemoveAt(index);
+        tourDropdown.options.RemoveAt(index);
+        tourDropdown.SetValueWithoutNotify(Mathf.Clamp(index, 0, Mathf.Max(0, tourFiles.Count - 1)));
+        tourDropdown.RefreshShownValue();
+    }
+
+    private void ShowError(string message)
+    {
+        if (errorText != null) errorText.text = message;
+    }
+
+    private IEnumerator LoadTourCoroutine(int token)
+    {
+        normalMenu.SetActive(false);
 
         // Load model
         if (!string.IsNullOrEmpty(currentTour.header.model_file))
