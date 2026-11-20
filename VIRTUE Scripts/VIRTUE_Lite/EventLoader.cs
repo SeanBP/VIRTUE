@@ -346,6 +346,10 @@ public class EventLoader : MonoBehaviour
         if (errorText.text.StartsWith("Reading event file") || errorText.text.StartsWith("Loading events"))
             errorText.text = "";
 
+        // No event file is loaded, so drop the previous file's timing too.
+        if (!inTour)
+            ResetTimingSettings();
+
         // Cleared rather than left at the previous file, so selecting any
         // dropdown entry afterward -- including the one that was loaded
         // before -- actually loads it.
@@ -511,35 +515,33 @@ public class EventLoader : MonoBehaviour
             {
                 componentMaker.LoadModelFile(eventDataWrapper.header.model_file);
             }
-
-            if (eventDataWrapper.header.time_before >= 0f)
-            {
-                beforeField.text = eventDataWrapper.header.time_before.ToString();
-            }
-            else
-            {
-                // Not specified in this file -- clear the field so Update()'s
-                // per-frame reparse falls through to its own default instead
-                // of keeping whatever the previously loaded file set.
-                beforeField.text = "";
-            }
-            if (eventDataWrapper.header.time_after >= 0f)
-            {
-                afterField.text = eventDataWrapper.header.time_after.ToString();
-            }
-            else
-            {
-                afterField.text = "";
-            }
-            if (eventDataWrapper.header.speed >= 0f)
-            {
-                speedField.text = eventDataWrapper.header.speed.ToString();
-            }
-            else
-            {
-                speedField.text = "";
-            }
         }
+
+        // Timing applies to every event file loaded outside a tour, including
+        // one auto-loaded via a model's header.event_file -- only the
+        // model_file chase above is gated by chaseCompanion.
+        if (!inTour)
+        {
+            ApplyTimingSettings(eventDataWrapper.header.time_before,
+                                eventDataWrapper.header.time_after,
+                                eventDataWrapper.header.speed);
+        }
+    }
+
+    // Fills the time before/after and speed fields from an event file's
+    // header. Any value the file doesn't set (negative) clears its field, so
+    // Update()'s per-frame reparse falls through to its own default instead
+    // of keeping whatever the previously loaded file set.
+    private void ApplyTimingSettings(float timeBefore, float timeAfter, float newSpeed)
+    {
+        beforeField.text = timeBefore >= 0f ? timeBefore.ToString() : "";
+        afterField.text = timeAfter >= 0f ? timeAfter.ToString() : "";
+        speedField.text = newSpeed >= 0f ? newSpeed.ToString() : "";
+    }
+
+    private void ResetTimingSettings()
+    {
+        ApplyTimingSettings(-1f, -1f, -1f);
     }
 
     private void InitializeEventArrays(int numEvents)

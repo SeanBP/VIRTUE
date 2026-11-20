@@ -13,7 +13,10 @@ public class PlayerController : MonoBehaviour
     public CharacterController controller;
     public GameObject player;
     private float omega = 0.2f;
-    private float radius = 8f;
+    // The Radius slider's value is scaled by this before use, so its 0.1-30
+    // range covers twice the distance (0.2-60) without touching the scene.
+    private const float radiusScale = 2f;
+    private float radius = 8f * radiusScale;
     private float height = 3f;
     private float currentAngle = 0f;
 
@@ -323,7 +326,7 @@ public class PlayerController : MonoBehaviour
 
     public void Radius(float newValue)
     {
-        radius = newValue;
+        radius = newValue * radiusScale;
     }
 
     public void Height(float newValue)

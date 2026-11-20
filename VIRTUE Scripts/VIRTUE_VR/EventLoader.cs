@@ -346,6 +346,10 @@ public class EventLoader : MonoBehaviour
         if (errorText.text.StartsWith("Reading event file") || errorText.text.StartsWith("Loading events"))
             errorText.text = "";
 
+        // No event file is loaded, so drop the previous file's timing too.
+        if (!inTour)
+            ResetTimingSettings();
+
         // Cleared rather than left at the previous file, so selecting any
         // dropdown entry afterward -- including the one that was loaded
         // before -- actually loads it.
@@ -511,63 +515,49 @@ public class EventLoader : MonoBehaviour
             {
                 componentMaker.LoadModelFile(eventDataWrapper.header.model_file);
             }
-
-            // beforeField/afterField/speedField are unassigned in this
-            // project's scene -- no visible InputField UI for
-            // time_before/time_after/speed. When the field exists, keep the
-            // original behavior of writing its text (Update() parses that
-            // back into timeBeforeCollision/speed each frame). When it
-            // doesn't, apply the value directly to the runtime state
-            // instead, the same way AnimateEventCoroutine already does for
-            // tours (timeBeforeCollision = settings.time_before; speed =
-            // settings.speed) -- the setting still takes effect, it just
-            // has nothing to display it in.
-            if (eventDataWrapper.header.time_before >= 0f)
-            {
-                if (beforeField != null)
-                    beforeField.text = eventDataWrapper.header.time_before.ToString();
-                else
-                    timeBeforeCollision = eventDataWrapper.header.time_before;
-            }
-            else
-            {
-                // Not specified in this file -- reset back to the same
-                // default Update() falls back to when beforeField exists,
-                // instead of leaving whatever the previous file set.
-                if (beforeField != null)
-                    beforeField.text = "";
-                else
-                    timeBeforeCollision = 0.001f * 15f / totScale;
-            }
-            if (eventDataWrapper.header.time_after >= 0f)
-            {
-                if (afterField != null)
-                    afterField.text = eventDataWrapper.header.time_after.ToString();
-                else
-                    timeAfterCollision = eventDataWrapper.header.time_after;
-            }
-            else
-            {
-                if (afterField != null)
-                    afterField.text = "";
-                else
-                    timeAfterCollision = 0.001f * 60f / totScale;
-            }
-            if (eventDataWrapper.header.speed >= 0f)
-            {
-                if (speedField != null)
-                    speedField.text = eventDataWrapper.header.speed.ToString();
-                else
-                    speed = eventDataWrapper.header.speed;
-            }
-            else
-            {
-                if (speedField != null)
-                    speedField.text = "";
-                else
-                    speed = 0.001f * 5f / totScale;
-            }
         }
+
+        // Timing applies to every event file loaded outside a tour, including
+        // one auto-loaded via a model's header.event_file -- only the
+        // model_file chase above is gated by chaseCompanion.
+        if (!inTour)
+        {
+            ApplyTimingSettings(eventDataWrapper.header.time_before,
+                                eventDataWrapper.header.time_after,
+                                eventDataWrapper.header.speed);
+        }
+    }
+
+    // Applies an event file's time_before/time_after/speed. Any value the
+    // file doesn't set (negative) goes back to the default rather than
+    // keeping whatever the previously loaded file set.
+    //
+    // beforeField/afterField/speedField are unassigned in this project's
+    // scene -- no visible InputField UI for these. When a field exists, its
+    // text is written (Update() parses that back each frame, falling back to
+    // its default on empty text). When it doesn't, the runtime value is set
+    // directly, the same way AnimateEventCoroutine does for tours.
+    private void ApplyTimingSettings(float timeBefore, float timeAfter, float newSpeed)
+    {
+        if (beforeField != null)
+            beforeField.text = timeBefore >= 0f ? timeBefore.ToString() : "";
+        else
+            timeBeforeCollision = timeBefore >= 0f ? timeBefore : 0.001f * 15f / totScale;
+
+        if (afterField != null)
+            afterField.text = timeAfter >= 0f ? timeAfter.ToString() : "";
+        else
+            timeAfterCollision = timeAfter >= 0f ? timeAfter : 0.001f * 60f / totScale;
+
+        if (speedField != null)
+            speedField.text = newSpeed >= 0f ? newSpeed.ToString() : "";
+        else
+            speed = newSpeed >= 0f ? newSpeed : 0.001f * 5f / totScale;
+    }
+
+    private void ResetTimingSettings()
+    {
+        ApplyTimingSettings(-1f, -1f, -1f);
     }
 
     private void InitializeEventArrays(int numEvents)

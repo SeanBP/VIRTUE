@@ -722,7 +722,7 @@ public class ComponentMaker : MonoBehaviour
             fileContents = jsonFile.text;
 
             // Parse JSON file to EventDataWrapper class
-            ComponentListWrapper componentListWrapper = JsonUtility.FromJson<ComponentListWrapper>(fileContents);
+            ComponentListWrapper componentListWrapper = ModelFile.FromJson(fileContents);
 
             string version = componentListWrapper.header.version;
 
@@ -755,6 +755,11 @@ public class ComponentMaker : MonoBehaviour
                         .ToList();
 
                 ComponentsBuildResult buildResult = ModelGeometry.BuildComponents(sortedComponents, scale, lineThickness, collidersOn);
+                // Components the file described but that couldn't be built (e.g. a
+                // hexahedron without 8 valid vertices) -- shown so the file's author
+                // sees them; Escape or a click clears the message.
+                if (buildResult.Warnings.Count > 0)
+                    errorText.text = string.Join("\n", buildResult.Warnings);
                 detectorParts.AddRange(buildResult.DetectorParts);
                 lineObjects.AddRange(buildResult.LineObjects);
                 nameTagObjects.AddRange(buildResult.NameTagObjects);

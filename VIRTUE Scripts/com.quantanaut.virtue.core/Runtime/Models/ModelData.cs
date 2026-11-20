@@ -42,6 +42,14 @@ namespace VirtueCore.Models
         public float[] size = new float[] { 1f, 1f, 1f };
 
         public float[] color_rgba = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
+
+        // Hexahedron only: 8 corners [x, y, z] in the component's local frame
+        // (before position/euler_angles_deg are applied) -- 4 front-face
+        // corners, then the 4 back-face corners in the same winding, so
+        // corner i of the front face connects to corner i + 4 of the back.
+        // JsonUtility can't read nested arrays, so this is filled in by
+        // ModelFile.FromJson rather than by JsonUtility itself.
+        [System.NonSerialized] public float[][] vertices;
     }
 
     [System.Serializable]

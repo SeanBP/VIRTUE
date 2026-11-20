@@ -25,6 +25,9 @@ namespace VirtueCore.Models
         public List<GameObject> LineObjects;
         public List<GameObject> NameTagObjects;
         public List<GameObject> Pivots;
+        // Components that were skipped, one message each, worded for the
+        // person who wrote the model file.
+        public List<string> Warnings;
     }
 
     // Pure geometry generation for model/detector components: every method
@@ -153,6 +156,125 @@ namespace VirtueCore.Models
             }
 
             return new PieceResult { Piece = prism, Lines = lineObjects, NameTag = nameTag };
+        }
+
+        // Number of corners a hexahedron's "vertices" must list.
+        public const int HexahedronCornerCount = 8;
+
+        // Returns null if `vertices` is a valid hexahedron corner list,
+        // otherwise a short description of what's wrong with it.
+        public static string ValidateHexahedronVertices(float[][] vertices)
+        {
+            if (vertices == null)
+                return "needs \"vertices\": a list of 8 [x, y, z] corners";
+            if (vertices.Length != HexahedronCornerCount)
+                return "has " + vertices.Length + " vertices; it needs exactly 8";
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                if (vertices[i] == null || vertices[i].Length != 3)
+                    return "vertex " + i + " isn't an [x, y, z] triple";
+            }
+            return null;
+        }
+
+        // A general 8-cornered solid. `vertices` are in the component's local
+        // frame: corners 0-3 are the front face, 4-7 the back face in the
+        // same winding (corner i joins corner i + 4). position and
+        // eulerAngle then place that local shape exactly as they place a
+        // block, so the same vertex list can be reused at several positions
+        // and orientations. Faces don't have to be planar or parallel -- each
+        // quad is split into two triangles along its 0-2 diagonal.
+        public static PieceResult MakeHexahedron(string name, float[][] localVertices, float[] position, float[] eulerAngle, float[] rgba, int renderQueue, float scale, float lineThickness, bool collidersOn)
+        {
+            GameObject hexahedron = new GameObject("Detector Piece", typeof(MeshFilter), typeof(MeshRenderer));
+            hexahedron.tag = "Detector";
+
+            // Same file -> Unity axis convention as every other component
+            // position: x is mirrored, everything is scaled by the model's
+            // length unit/scale.
+            Vector3[] vertices = new Vector3[HexahedronCornerCount];
+            for (int i = 0; i < HexahedronCornerCount; i++)
+            {
+                vertices[i] = new Vector3(-scale * localVertices[i][0], scale * localVertices[i][1], scale * localVertices[i][2]);
+            }
+
+            // The six quads, each as corner indices in order around the face.
+            int[,] faces = new int[6, 4]
+            {
+                {0, 1, 2, 3}, // Front face
+                {4, 5, 6, 7}, // Back face
+                {0, 1, 5, 4}, // Side faces, one per front-face edge
+                {1, 2, 6, 5},
+                {2, 3, 7, 6},
+                {3, 0, 4, 7}
+            };
+
+            // Both windings of every triangle, as MakeBlock does, so the
+            // shape renders from inside and outside whichever way the user
+            // ordered the corners (and despite the mirrored x axis).
+            int[] triangles = new int[6 * 2 * 3 * 2];
+            int t = 0;
+            for (int f = 0; f < 6; f++)
+            {
+                int a = faces[f, 0], b = faces[f, 1], c = faces[f, 2], d = faces[f, 3];
+                int[] quad = { a, b, c, a, c, d };
+                for (int k = 0; k < quad.Length; k++) triangles[t++] = quad[k];
+                for (int k = quad.Length - 1; k >= 0; k--) triangles[t++] = quad[k];
+            }
+
+            Mesh mesh = new Mesh();
+            mesh.vertices = vertices;
+            mesh.triangles = triangles;
+            hexahedron.GetComponent<MeshFilter>().mesh = mesh;
+
+            MeshCollider meshCollider = hexahedron.AddComponent<MeshCollider>();
+            meshCollider.enabled = collidersOn;
+
+            Material material = new Material(Shader.Find("Transparent/Diffuse"));
+            material.color = new Color(rgba[0], rgba[1], rgba[2], rgba[3]);
+            material.renderQueue = RenderOrder.DetectorQueue(renderQueue);
+            hexahedron.GetComponent<MeshRenderer>().sharedMaterial = material;
+
+            // Outline: the 12 edges.
+            int[,] edges = new int[12, 2]
+            {
+                {0, 1}, {1, 2}, {2, 3}, {3, 0}, // Front face
+                {4, 5}, {5, 6}, {6, 7}, {7, 4}, // Back face
+                {0, 4}, {1, 5}, {2, 6}, {3, 7}  // Connecting edges
+            };
+
+            List<GameObject> lineObjects = new List<GameObject>();
+            Material lineMaterial = new Material(Shader.Find("Sprites/Default"));
+            for (int i = 0; i < 12; i++)
+            {
+                GameObject line = new GameObject("Line");
+                LineRenderer lineRenderer = line.AddComponent<LineRenderer>();
+                lineRenderer.positionCount = 2;
+                lineRenderer.useWorldSpace = false;
+                lineRenderer.startWidth = lineThickness;
+                lineRenderer.endWidth = lineThickness;
+                lineRenderer.SetPosition(0, vertices[edges[i, 0]]);
+                lineRenderer.SetPosition(1, vertices[edges[i, 1]]);
+                lineRenderer.material = lineMaterial;
+                lineRenderer.material.renderQueue = -1;
+
+                line.transform.parent = hexahedron.transform;
+                line.transform.localPosition = Vector3.zero;
+                line.SetActive(false);
+                line.tag = "Line";
+                lineObjects.Add(line);
+            }
+
+            hexahedron.transform.eulerAngles = new Vector3(eulerAngle[0], -eulerAngle[1], eulerAngle[2]);
+            hexahedron.transform.position = new Vector3(-scale * position[0], scale * position[1], scale * position[2]);
+
+            NameTagResult? nameTag = null;
+            if (!String.Equals(name, ""))
+            {
+                nameTag = CreateNameTag(hexahedron, name, eulerAngle, renderQueue, lineThickness);
+            }
+
+            return new PieceResult { Piece = hexahedron, Lines = lineObjects, NameTag = nameTag };
         }
 
         public static PieceResult MakeSpheroid(string name, float[] position, float[] size, float[] eulerAngle, float[] rgba, int renderQueue, float scale, float lineThickness, bool collidersOn)
@@ -622,7 +744,8 @@ namespace VirtueCore.Models
                 DetectorParts = new List<GameObject>(),
                 LineObjects = new List<GameObject>(),
                 NameTagObjects = new List<GameObject>(),
-                Pivots = new List<GameObject>()
+                Pivots = new List<GameObject>(),
+                Warnings = new List<string>()
             };
 
             int detCount = 0;
@@ -638,7 +761,33 @@ namespace VirtueCore.Models
 
                 string typeLower = data.type.ToLowerInvariant();
 
-                if (typeLower.Contains("t"))
+                // Checked first: the older types below match on a single
+                // letter, so a more specific name has to win before them.
+                if (typeLower.Contains("hex"))
+                {
+                    string problem = ValidateHexahedronVertices(data.vertices);
+                    if (problem != null)
+                    {
+                        string label = string.IsNullOrEmpty(name) ? "a hexahedron" : "hexahedron \"" + name + "\"";
+                        string warning = "Skipped " + label + ": it " + problem + ".";
+                        result.Warnings.Add(warning);
+                        Debug.LogWarning(warning);
+                        continue;
+                    }
+
+                    PieceResult piece = MakeHexahedron(
+                        name,
+                        data.vertices,
+                        position,
+                        eulerAngle,
+                        rgba,
+                        sortedComponents.Count - index,
+                        scale, lineThickness, collidersOn);
+
+                    AppendPiece(result, piece);
+                    detCount++;
+                }
+                else if (typeLower.Contains("t"))
                 {
                     int sides = data.sides;
 
