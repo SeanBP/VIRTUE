@@ -231,8 +231,12 @@ public class ComponentMaker : MonoBehaviour
     }
 
 
+    // Fades to a tour scene's components. A newer call (the user skipping
+    // ahead) replaces a fade still in progress; it starts from whatever
+    // alphas that fade had reached, so nothing jumps.
     public void ActivateComponents(ModelSettings modelSettings)
     {
+        if (activateComponentsCoroutine != null) StopCoroutine(activateComponentsCoroutine);
         activateComponentsCoroutine = StartCoroutine(ActivateComponentsCoroutine(modelSettings));
     }
 

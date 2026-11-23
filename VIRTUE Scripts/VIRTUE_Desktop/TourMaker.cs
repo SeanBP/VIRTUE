@@ -204,6 +204,11 @@ public class TourMaker : MonoBehaviour
             activeTourLoadCoroutine = null;
         }
         tourLoadToken++;
+        if (sceneTransitionCoroutine != null)
+        {
+            StopCoroutine(sceneTransitionCoroutine);
+            sceneTransitionCoroutine = null;
+        }
 
         TourActive = false;
         currentTour = null;
@@ -314,23 +319,39 @@ public class TourMaker : MonoBehaviour
         currentSceneIndex = 0;
 
         activeTourLoadCoroutine = null;
-        ShowScene(currentSceneIndex);
+
+        // The first scene appears in place -- there's nothing meaningful to
+        // fly from yet.
+        ShowScene(currentSceneIndex, teleport: true);
     }
 
-    private void ShowScene(int sceneIndex)
+    // The scene change in progress (camera moving, event waiting for it).
+    // A new Next/Previous/Restart/Replay replaces it, redirecting the camera
+    // from wherever it has got to.
+    private Coroutine sceneTransitionCoroutine;
+
+    private void ShowScene(int sceneIndex, bool teleport = false)
     {
         if (currentTour == null || sceneIndex < 0 || sceneIndex >= currentTour.scenes.Count)
             return;
 
         TourScene scene = currentTour.scenes[sceneIndex];
 
-        // Model
+        // Model fade and text change straight away.
         componentMaker?.ActivateComponents(scene.model_settings);
+        titleText.text = scene.text.title;
+        bodyText.text = scene.text.body;
 
+        if (sceneTransitionCoroutine != null)
+            StopCoroutine(sceneTransitionCoroutine);
+        sceneTransitionCoroutine = StartCoroutine(SceneTransitionCoroutine(scene, teleport));
+    }
 
-        // Event
-        eventLoader?.AnimateEvent(scene.event_settings);
-
+    // Moves (or teleports) the camera to the scene, then starts its event:
+    // the previous scene's event is cleared as the camera leaves, and the new
+    // one only plays once the camera is in position.
+    private IEnumerator SceneTransitionCoroutine(TourScene scene, bool teleport)
+    {
         // Camera position and focus
         Vector3 playerPos = new Vector3(
             scene.camera_settings.position[0],
@@ -343,15 +364,29 @@ public class TourMaker : MonoBehaviour
             scene.camera_settings.focus[2]
         );
 
-        // One duration for both, so the camera arrives and finishes turning
-        // at the same moment.
-        float duration = TransitionDuration(playerPos, focusPos);
-        playerController?.MovePlayerTo(playerPos, duration);
-        cameraController?.MoveTargetTo(focusPos, duration, playerPos);
+        eventLoader?.ClearTourEvent();
 
-        // UI text
-        titleText.text = scene.text.title;
-        bodyText.text = scene.text.body;
+        if (teleport)
+        {
+            playerController?.TeleportPlayerTo(playerPos);
+            cameraController?.SnapTargetTo(focusPos, playerPos);
+        }
+        else
+        {
+            // One duration for both, so the camera arrives and finishes
+            // turning at the same moment.
+            float duration = TransitionDuration(playerPos, focusPos);
+            playerController?.MovePlayerTo(playerPos, duration);
+            cameraController?.MoveTargetTo(focusPos, duration, playerPos);
+
+            yield return null;
+            yield return new WaitUntil(() =>
+                (playerController == null || !playerController.isMoving) &&
+                (cameraController == null || !cameraController.isMoving));
+        }
+
+        sceneTransitionCoroutine = null;
+        eventLoader?.AnimateEvent(scene.event_settings);
     }
 
     // How long the move to a scene's camera position/focus should take:
@@ -375,47 +410,38 @@ public class TourMaker : MonoBehaviour
         return TourMotion.Duration(travel, turn, minMoveSeconds, maxMoveSeconds, moveDistanceScale);
     }
 
+    // These work mid-transition too: each one retargets the scene change in
+    // progress, so pressing Next twice skips straight to the scene after
+    // next, with the camera turning toward it from wherever it is.
     public void ReplayScene()
     {
-        if (!playerController.isMoving & !cameraController.isMoving)
-        {
-            ShowScene(currentSceneIndex);
-        }
+        if (currentTour == null) return;
+        ShowScene(currentSceneIndex);
     }
 
     public void RestartTour()
     {
-        if (!playerController.isMoving & !cameraController.isMoving)
-        {
-            currentSceneIndex = 0;
-            ShowScene(currentSceneIndex);
-        }
+        if (currentTour == null) return;
+        currentSceneIndex = 0;
+        ShowScene(currentSceneIndex);
     }
 
     public void NextScene()
     {
-        if (!playerController.isMoving & !cameraController.isMoving)
-        {
-            if (currentTour == null) return;
-            currentSceneIndex++;
-            if (currentSceneIndex >= currentTour.scenes.Count)
-                currentSceneIndex = currentTour.scenes.Count - 1;
+        if (currentTour == null) return;
+        if (currentSceneIndex >= currentTour.scenes.Count - 1) return;
 
-            ShowScene(currentSceneIndex);
-        }
+        currentSceneIndex++;
+        ShowScene(currentSceneIndex);
     }
 
     public void PreviousScene()
     {
-        if (!playerController.isMoving & !cameraController.isMoving)
-        {
-            if (currentTour == null) return;
-            currentSceneIndex--;
-            if (currentSceneIndex < 0)
-                currentSceneIndex = 0;
+        if (currentTour == null) return;
+        if (currentSceneIndex <= 0) return;
 
-            ShowScene(currentSceneIndex);
-        }
+        currentSceneIndex--;
+        ShowScene(currentSceneIndex);
     }
 
     void Update()

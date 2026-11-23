@@ -103,6 +103,7 @@ public class PlayerController : MonoBehaviour
     {
         // The only coroutine here is the tour's MovePlayerTo flight.
         StopAllCoroutines();
+        moveCoroutine = null;
         isMoving = false;
 
         if (!tourReturnState.HasValue)
@@ -132,9 +133,29 @@ public class PlayerController : MonoBehaviour
         controller.enabled = state.controllerEnabled;
     }
 
+    private Coroutine moveCoroutine;
+
+    // Flies the player to targetPosition. A newer call (the user skipping to
+    // another tour scene mid-flight) replaces this one and sets off from
+    // wherever the player has got to.
     public void MovePlayerTo(Vector3 targetPosition, float duration = 1.0f)
     {
-        StartCoroutine(MovePlayerToCoroutine(targetPosition, duration));
+        if (moveCoroutine != null) StopCoroutine(moveCoroutine);
+        moveCoroutine = StartCoroutine(MovePlayerToCoroutine(targetPosition, duration));
+    }
+
+    // Puts the player straight at targetPosition with no flight (the first
+    // scene of a tour), in the same tour movement mode MovePlayerTo uses.
+    public void TeleportPlayerTo(Vector3 targetPosition)
+    {
+        if (moveCoroutine != null) { StopCoroutine(moveCoroutine); moveCoroutine = null; }
+
+        viewNum = 5;
+        cameraController?.ClearAxisLock();
+        controller.enabled = false;
+        applyGravity = false;
+        player.transform.position = targetPosition;
+        isMoving = false;
     }
 
     private IEnumerator MovePlayerToCoroutine(Vector3 targetPosition, float duration)
@@ -167,6 +188,7 @@ public class PlayerController : MonoBehaviour
         player.transform.position = targetPosition;
 
         isMoving = false;
+        moveCoroutine = null;
     }
 
 

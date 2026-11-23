@@ -209,9 +209,29 @@ public class EventLoader : MonoBehaviour
         afterField.text = state.afterText;
     }
 
+    // Starts a tour scene's event. Replaces any scene event that hasn't
+    // started yet, so skipping through scenes only ever plays the one the
+    // user lands on.
     public void AnimateEvent(EventSettings settings)
     {
+        if (animateEventCoroutine != null) StopCoroutine(animateEventCoroutine);
         animateEventCoroutine = StartCoroutine(AnimateEventCoroutine(settings));
+    }
+
+    // Clears the current tour scene's event (and cancels one that hasn't
+    // started yet) -- used when the camera leaves for another scene, whose
+    // event only starts once the camera has arrived.
+    public void ClearTourEvent()
+    {
+        if (animateEventCoroutine != null) StopCoroutine(animateEventCoroutine);
+        animateEventCoroutine = StartCoroutine(ClearTourEventCoroutine());
+    }
+
+    private IEnumerator ClearTourEventCoroutine()
+    {
+        yield return new WaitUntil(() => activeCoroutines == 0);
+        StartClearHits();
+        animateEventCoroutine = null;
     }
 
     private IEnumerator AnimateEventCoroutine(EventSettings settings)

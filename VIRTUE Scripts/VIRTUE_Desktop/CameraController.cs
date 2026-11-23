@@ -88,6 +88,7 @@ public class CameraController : MonoBehaviour
     {
         // The only coroutine here is the tour's SmoothMoveFocus.
         StopAllCoroutines();
+        focusCoroutine = null;
         activeCoroutines = 0;
         isMoving = false;
         inTour = false;
@@ -137,14 +138,41 @@ public class CameraController : MonoBehaviour
             axisLocked = false;
         }
 
-        StartCoroutine(SmoothMoveFocus(worldPosition, duration, endCameraPosition));
+        // A newer move (the user skipping to another tour scene mid-flight)
+        // replaces this one; it sets off from the focus and rotation the
+        // camera has reached, so the redirect is smooth.
+        if (focusCoroutine != null) StopCoroutine(focusCoroutine);
+        focusCoroutine = StartCoroutine(SmoothMoveFocus(worldPosition, duration, endCameraPosition));
     }
+
+    // Points the camera straight at worldPosition from cameraPosition with
+    // no transition (the first scene of a tour).
+    public void SnapTargetTo(Vector3 worldPosition, Vector3 cameraPosition)
+    {
+        if (focusCoroutine != null) { StopCoroutine(focusCoroutine); focusCoroutine = null; }
+
+        if (!inTour)
+        {
+            mainCamera.orthographic = false;
+            looping = false;
+            axisLocked = false;
+        }
+
+        focusPosition = worldPosition;
+        tourRotationEnd = TourMotion.LookRotation(cameraPosition, worldPosition, transform.rotation);
+        tourRotationStart = tourRotationEnd;
+        tourRotationProgress = 1f;
+        tourRotationActive = true;
+        inTour = true;
+        isMoving = false;
+        transform.rotation = tourRotationEnd;
+    }
+
+    private Coroutine focusCoroutine;
 
     private IEnumerator SmoothMoveFocus(Vector3 destination, float duration, Vector3 endCameraPosition)
     {
         isMoving = true;
-        yield return new WaitUntil(() => activeCoroutines == 0);
-        activeCoroutines++;
 
         Vector3 startPos = focusPosition;
         tourRotationStart = transform.rotation;
@@ -166,8 +194,8 @@ public class CameraController : MonoBehaviour
 
         focusPosition = destination;
         tourRotationProgress = 1f;
-        activeCoroutines--;
         isMoving = false;
+        focusCoroutine = null;
     }
 
 
