@@ -233,6 +233,28 @@ public class PauseMenu : MonoBehaviour
         inTour = true;
     }
 
+    // Wired to the tour menu's Exit button. Returns to the normal menu and
+    // the view the user had before the tour, without reloading the scene
+    // (which used to reset everything, volume and HUD included).
+    public void ExitTour()
+    {
+        if (tourMaker == null)
+        {
+            Reset();
+            return;
+        }
+
+        DropdownUtil.CloseOpenDropdowns();
+        tourMaker.ExitTour();
+        inTour = false;
+
+        // Exit is pressed from the open tour menu, so the game is paused;
+        // the normal menu comes back open, as it was when the tour started.
+        GameIsPaused = true;
+        Cursor.lockState = CursorLockMode.None;
+        navigationMenu.GetComponent<RectTransform>().anchoredPosition = initialMenuPositions[navigationMenu];
+    }
+
     // Called by TourMaker when a tour fails to open, in case this ever runs
     // before TourMaker.StartTour instead of after.
     public void CancelTour()

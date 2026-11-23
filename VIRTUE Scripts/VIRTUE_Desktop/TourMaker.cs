@@ -31,6 +31,16 @@ public class TourMaker : MonoBehaviour
     [SerializeField] private CameraController cameraController;
     [SerializeField] private PlayerController playerController;
 
+    [Header("Scene Transitions")]
+    // Every scene change takes at least minMoveSeconds; longer moves (and
+    // bigger turns) take longer, levelling off toward maxMoveSeconds so
+    // even a move across a whole accelerator never drags on.
+    [SerializeField] private float minMoveSeconds = 1f;
+    [SerializeField] private float maxMoveSeconds = 5f;
+    // Metres of travel at which a move uses ~63% of the extra time between
+    // min and max; smaller values reach the maximum sooner.
+    [SerializeField] private float moveDistanceScale = 30f;
+
     // Tracks the currently-running tour-loading coroutine, so selecting a
     // new tour while one is still loading aborts it via StopCoroutine
     // instead of racing it. tourLoadToken is a second line of defense,
@@ -153,6 +163,17 @@ public class TourMaker : MonoBehaviour
             return;
         }
 
+        // Remember what the user had, so ExitTour can put it back. Skipped
+        // if a tour is somehow already running, so its saved state (from
+        // before that tour) isn't overwritten with tour state.
+        if (!TourActive)
+        {
+            componentMaker.CaptureTourReturnState();
+            eventLoader.CaptureTourReturnState();
+            playerController?.CaptureTourReturnState();
+            cameraController?.CaptureTourReturnState();
+        }
+
         TourActive = true;
         currentTour = tour;
 
@@ -164,6 +185,40 @@ public class TourMaker : MonoBehaviour
 
         tourLoadToken++;
         activeTourLoadCoroutine = StartCoroutine(LoadTourCoroutine(tourLoadToken));
+    }
+
+    // Leaves the tour and puts the user back where they were before it
+    // started -- same model and event file, camera position and view mode,
+    // menus -- without reloading the scene, so everything the tour didn't
+    // touch (volume, HUD, sliders, typed fields...) is simply left as is.
+    public void ExitTour()
+    {
+        if (!TourActive)
+            return;
+
+        // Stop the tour's own loading and any scene transition in progress
+        // before restoring, so nothing from the tour lands afterwards.
+        if (activeTourLoadCoroutine != null)
+        {
+            StopCoroutine(activeTourLoadCoroutine);
+            activeTourLoadCoroutine = null;
+        }
+        tourLoadToken++;
+
+        TourActive = false;
+        currentTour = null;
+        currentSceneIndex = 0;
+
+        tourMenu.SetActive(false);
+        tourText.SetActive(false);
+        titleText.text = "";
+        bodyText.text = "";
+        normalMenu.SetActive(true);
+
+        playerController?.RestoreTourReturnState();
+        cameraController?.RestoreTourReturnState();
+        componentMaker.RestoreTourReturnState();
+        eventLoader.RestoreTourReturnState();
     }
 
     // Reads and validates the tour at tourFiles[index]. Shows an error and
@@ -276,25 +331,48 @@ public class TourMaker : MonoBehaviour
         // Event
         eventLoader?.AnimateEvent(scene.event_settings);
 
-        // Player position
+        // Camera position and focus
         Vector3 playerPos = new Vector3(
             scene.camera_settings.position[0],
             scene.camera_settings.position[1],
             scene.camera_settings.position[2]
         );
-        playerController?.MovePlayerTo(playerPos);
-
-        // Camera focus
         Vector3 focusPos = new Vector3(
             scene.camera_settings.focus[0],
             scene.camera_settings.focus[1],
             scene.camera_settings.focus[2]
         );
-        cameraController?.MoveTargetTo(focusPos);
+
+        // One duration for both, so the camera arrives and finishes turning
+        // at the same moment.
+        float duration = TransitionDuration(playerPos, focusPos);
+        playerController?.MovePlayerTo(playerPos, duration);
+        cameraController?.MoveTargetTo(focusPos, duration, playerPos);
 
         // UI text
         titleText.text = scene.text.title;
         bodyText.text = scene.text.body;
+    }
+
+    // How long the move to a scene's camera position/focus should take:
+    // based on how far the camera and its focus travel and how far the view
+    // turns (see TourMotion.Duration).
+    private float TransitionDuration(Vector3 endPosition, Vector3 endFocus)
+    {
+        if (playerController == null || cameraController == null)
+            return minMoveSeconds;
+
+        Vector3 startPosition = playerController.player.transform.position;
+        float travel = Mathf.Max(
+            Vector3.Distance(startPosition, endPosition),
+            Vector3.Distance(cameraController.FocusPosition, endFocus));
+
+        Vector3 endDirection = endFocus - endPosition;
+        float turn = endDirection.sqrMagnitude > 1e-8f
+            ? Vector3.Angle(cameraController.transform.forward, endDirection)
+            : 0f;
+
+        return TourMotion.Duration(travel, turn, minMoveSeconds, maxMoveSeconds, moveDistanceScale);
     }
 
     public void ReplayScene()

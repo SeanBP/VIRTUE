@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using VirtueCore.Tours;
 
 public class CameraController : MonoBehaviour
 {
@@ -52,38 +53,119 @@ public class CameraController : MonoBehaviour
         axisLocked = false;
     }
 
+    // ---- Returning from a tour ----
+    // A tour takes over where the camera looks (and turns off loop/ortho
+    // modes), so how the camera was set up is saved when the tour starts and
+    // put back when it ends.
+    private struct TourReturnState
+    {
+        public bool looping;
+        public bool orthoView;
+        public bool orthographic;
+        public bool axisLocked;
+        public Vector3 lockedForward;
+        public Vector3 lockedUp;
+        public Quaternion pivotLocalRotation;
+    }
+
+    private TourReturnState? tourReturnState;
+
+    public void CaptureTourReturnState()
+    {
+        tourReturnState = new TourReturnState
+        {
+            looping = looping,
+            orthoView = orthoView,
+            orthographic = mainCamera != null && mainCamera.orthographic,
+            axisLocked = axisLocked,
+            lockedForward = lockedForward,
+            lockedUp = lockedUp,
+            pivotLocalRotation = pivot.localRotation
+        };
+    }
+
+    public void RestoreTourReturnState()
+    {
+        // The only coroutine here is the tour's SmoothMoveFocus.
+        StopAllCoroutines();
+        activeCoroutines = 0;
+        isMoving = false;
+        inTour = false;
+        tourRotationActive = false;
+        tourRotationProgress = 1f;
+
+        if (!tourReturnState.HasValue)
+            return;
+
+        TourReturnState state = tourReturnState.Value;
+        tourReturnState = null;
+
+        looping = state.looping;
+        orthoView = state.orthoView;
+        if (mainCamera != null) mainCamera.orthographic = state.orthographic;
+        axisLocked = state.axisLocked;
+        lockedForward = state.lockedForward;
+        lockedUp = state.lockedUp;
+        pivot.localRotation = state.pivotLocalRotation;
+    }
+
+    public Vector3 FocusPosition => focusPosition;
+
+    // During a tour the camera's rotation is driven from here rather than by
+    // re-aiming at the focus every frame: it turns smoothly from where it
+    // was looking to where it will look from the end position. Re-aiming
+    // every frame made the view swing sharply whenever the camera passed
+    // near the focus point or near the vertical axis through it.
+    private bool tourRotationActive = false;
+    private Quaternion tourRotationStart;
+    private Quaternion tourRotationEnd;
+    private float tourRotationProgress = 1f;
+
     public void MoveTargetTo(Vector3 worldPosition)
+    {
+        MoveTargetTo(worldPosition, targetMoveDuration, target.position);
+    }
+
+    // Moves the focus to worldPosition over `duration` seconds, while the
+    // camera (on its way to endCameraPosition) turns to face it.
+    public void MoveTargetTo(Vector3 worldPosition, float duration, Vector3 endCameraPosition)
     {
         if (!inTour)
         {
             mainCamera.orthographic = false;
             looping = false;
-            
+            axisLocked = false;
         }
 
-        StartCoroutine(SmoothMoveFocus(worldPosition));
+        StartCoroutine(SmoothMoveFocus(worldPosition, duration, endCameraPosition));
     }
 
-    private IEnumerator SmoothMoveFocus(Vector3 destination)
+    private IEnumerator SmoothMoveFocus(Vector3 destination, float duration, Vector3 endCameraPosition)
     {
         isMoving = true;
         yield return new WaitUntil(() => activeCoroutines == 0);
         activeCoroutines++;
 
         Vector3 startPos = focusPosition;
-        float elapsed = 0f;
+        tourRotationStart = transform.rotation;
+        tourRotationEnd = TourMotion.LookRotation(endCameraPosition, destination, tourRotationStart);
+        tourRotationProgress = 0f;
+        tourRotationActive = true;
+        inTour = true;
 
-        while (elapsed < targetMoveDuration)
+        float elapsed = 0f;
+        while (elapsed < duration)
         {
             elapsed += Time.deltaTime;
-            float t = Mathf.Clamp01(elapsed / targetMoveDuration);
+            float eased = TourMotion.Ease(duration > 0f ? elapsed / duration : 1f);
 
-            focusPosition = Vector3.Lerp(startPos, destination, t);
-            inTour = true;
+            focusPosition = Vector3.Lerp(startPos, destination, eased);
+            tourRotationProgress = eased;
             yield return null;
         }
 
         focusPosition = destination;
+        tourRotationProgress = 1f;
         activeCoroutines--;
         isMoving = false;
     }
@@ -166,8 +248,10 @@ public class CameraController : MonoBehaviour
         {
             target.transform.position = new Vector3(0f, 0f, 0f);
         }
-        if(!inTour)
+        if (!inTour)
             transform.LookAt(target);
+        else if (tourRotationActive)
+            transform.rotation = Quaternion.Slerp(tourRotationStart, tourRotationEnd, tourRotationProgress);
         else
             transform.LookAt(focusPosition);
 

@@ -130,9 +130,88 @@ public class EventLoader : MonoBehaviour
 
     }
 
+    // ---- Returning from a tour ----
+    // A tour loads its own event file and drives playback directly, so the
+    // event file the user had (and their playback fields) is saved when the
+    // tour starts and put back when it ends, instead of reloading the scene.
+    private struct TourReturnState
+    {
+        public string loadedFile;   // "" if no event file was loaded
+        public bool autoAnimate;
+        public string speedText;
+        public string beforeText;
+        public string afterText;
+    }
+
+    private TourReturnState? tourReturnState;
+    private Coroutine tourLoadCoroutine;
+    private Coroutine animateEventCoroutine;
+
+    public void CaptureTourReturnState()
+    {
+        tourReturnState = new TourReturnState
+        {
+            // lastFilename is the file actually loaded (null once a missing
+            // companion has emptied the event).
+            loadedFile = lastFilename ?? "",
+            autoAnimate = autoAnimate,
+            speedText = speedField.text,
+            beforeText = beforeField.text,
+            afterText = afterField.text
+        };
+    }
+
+    public void RestoreTourReturnState()
+    {
+        if (tourLoadCoroutine != null) { StopCoroutine(tourLoadCoroutine); tourLoadCoroutine = null; }
+        if (animateEventCoroutine != null) { StopCoroutine(animateEventCoroutine); animateEventCoroutine = null; }
+        loadingTour = false;
+        inTour = false;
+
+        if (!tourReturnState.HasValue)
+            return;
+
+        TourReturnState state = tourReturnState.Value;
+        tourReturnState = null;
+        autoAnimate = state.autoAnimate;
+
+        if (string.IsNullOrEmpty(state.loadedFile))
+        {
+            CancelAndClearCurrentLoad();
+            ShowEmptyEvent();
+            FileSelection.ShowSelection(fileDropdown, -1);
+            RestorePlaybackFields(state);
+            return;
+        }
+
+        // Reloaded even when the tour used this same file, since the tour
+        // replaced its playback and hid its HUD.
+        filename = state.loadedFile;
+        lastFilename = null;
+        FileSelection.ShowSelection(fileDropdown, FileSelection.FindExact(fileNames, filename));
+        LoadFile(chaseCompanion: false);
+        StartCoroutine(RestorePlaybackFieldsAfterLoad(state));
+    }
+
+    // Loading a file fills the playback fields from its header; the user's
+    // own values (typed or from before the tour) win once it's done.
+    private IEnumerator RestorePlaybackFieldsAfterLoad(TourReturnState state)
+    {
+        yield return null;
+        yield return new WaitUntil(() => loadingEvent == false);
+        RestorePlaybackFields(state);
+    }
+
+    private void RestorePlaybackFields(TourReturnState state)
+    {
+        speedField.text = state.speedText;
+        beforeField.text = state.beforeText;
+        afterField.text = state.afterText;
+    }
+
     public void AnimateEvent(EventSettings settings)
     {
-        StartCoroutine(AnimateEventCoroutine(settings));
+        animateEventCoroutine = StartCoroutine(AnimateEventCoroutine(settings));
     }
 
     private IEnumerator AnimateEventCoroutine(EventSettings settings)
@@ -164,7 +243,7 @@ public class EventLoader : MonoBehaviour
 
     public void LoadTourFile(string newFilename)
     {
-        StartCoroutine(LoadTourFileCoroutine(newFilename));
+        tourLoadCoroutine = StartCoroutine(LoadTourFileCoroutine(newFilename));
     }
 
     private IEnumerator LoadTourFileCoroutine(string newFilename)

@@ -96,9 +96,88 @@ public class ComponentMaker : MonoBehaviour
         buildSimModel();
     }
 
+    // ---- Returning from a tour ----
+    // A tour swaps in its own model and fades components/lines, so the
+    // model the user had (and how they had it set up) is saved when the tour
+    // starts and rebuilt when it ends, instead of reloading the whole scene.
+    private struct TourReturnState
+    {
+        public string loadedFile;   // "" if no model was loaded
+        public float explode;
+        public bool wireOn;
+        public bool tagsActive;
+        public bool collidersOn;
+        public bool modelHidden;
+        public bool figuresActive;
+    }
+
+    private TourReturnState? tourReturnState;
+    private Coroutine tourLoadCoroutine;
+    private Coroutine activateComponentsCoroutine;
+
+    public void CaptureTourReturnState()
+    {
+        tourReturnState = new TourReturnState
+        {
+            // lastFilename is the model actually built (null once a missing
+            // companion has emptied it); filename may only be a selection.
+            loadedFile = lastFilename ?? "",
+            explode = explodeSlider.value,
+            wireOn = wireOn,
+            tagsActive = tagsActive,
+            collidersOn = collidersOn,
+            modelHidden = menagerieActive,
+            figuresActive = figures.activeSelf
+        };
+    }
+
+    public void RestoreTourReturnState()
+    {
+        if (tourLoadCoroutine != null) { StopCoroutine(tourLoadCoroutine); tourLoadCoroutine = null; }
+        if (activateComponentsCoroutine != null) { StopCoroutine(activateComponentsCoroutine); activateComponentsCoroutine = null; }
+
+        if (!tourReturnState.HasValue)
+            return;
+
+        TourReturnState state = tourReturnState.Value;
+        tourReturnState = null;
+        StartCoroutine(RestoreTourReturnStateCoroutine(state));
+    }
+
+    private IEnumerator RestoreTourReturnStateCoroutine(TourReturnState state)
+    {
+        if (string.IsNullOrEmpty(state.loadedFile))
+        {
+            ClearModel();
+        }
+        else
+        {
+            // Rebuilt even when the tour used this same file, since the tour
+            // faded its components and lines.
+            filename = state.loadedFile;
+            lastFilename = null;
+            FileSelection.ShowSelection(fileDropdown, FileSelection.FindExact(fileNames, filename));
+            LoadFile(chaseCompanion: false);
+
+            while (loadingModel)
+                yield return null;
+
+            // A rebuild starts with every toggle off and explode at 1, so
+            // put back whatever the user had.
+            explodeSlider.value = state.explode;
+            if (state.wireOn) ToggleLines();
+            if (state.tagsActive) ToggleTags();
+            if (state.collidersOn) ToggleColliders();
+            if (state.modelHidden) ToggleMenagerie();
+        }
+
+        if (state.figuresActive != figures.activeSelf)
+            ToggleFigures();
+    }
+
     public void LoadTourFile(string newFilename)
     {
-        StartCoroutine(LoadTourFileCoroutine(newFilename));
+        tourLoadCoroutine = StartCoroutine(LoadTourFileCoroutine(newFilename));
     }
 
     private IEnumerator LoadTourFileCoroutine(string newFilename)
@@ -154,7 +233,7 @@ public class ComponentMaker : MonoBehaviour
 
     public void ActivateComponents(ModelSettings modelSettings)
     {
-        StartCoroutine(ActivateComponentsCoroutine(modelSettings));
+        activateComponentsCoroutine = StartCoroutine(ActivateComponentsCoroutine(modelSettings));
     }
 
     private IEnumerator ActivateComponentsCoroutine(ModelSettings modelSettings)
@@ -492,7 +571,13 @@ public class ComponentMaker : MonoBehaviour
     private void ClearMissingModel(string missingFilename)
     {
         UnityEngine.Debug.LogWarning($"Model file \"{missingFilename}\" not found -- leaving the model empty.");
+        ClearModel();
+    }
 
+    // Empties the scene of the current model and its title text, leaving
+    // nothing loaded and the dropdown blank.
+    private void ClearModel()
+    {
         // Invalidates any FBX load still in flight, same as buildSimModel.
         modelLoadToken++;
         ResetModelState();

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI; // For Unity's UI Text class
+using VirtueCore.Tours;
 
 public class PlayerController : MonoBehaviour
 {
@@ -57,6 +58,80 @@ public class PlayerController : MonoBehaviour
         cameraController = FindAnyObjectByType<CameraController>();
     }
 
+    // ---- Returning from a tour ----
+    // A tour flies the player to each scene's camera position (and switches
+    // off normal movement), so where the user was and how they were moving
+    // is saved when the tour starts and put back when it ends.
+    private struct TourReturnState
+    {
+        public Vector3 position;
+        public Quaternion rotation;
+        public int viewNum;
+        public bool looping;
+        public bool applyGravity;
+        public bool platformActive;
+        public bool controllerEnabled;
+        public float distance;
+        public float panHorizontal;
+        public float panVertical;
+        public bool viewFlipped;
+        public float currentAngle;
+    }
+
+    private TourReturnState? tourReturnState;
+
+    public void CaptureTourReturnState()
+    {
+        tourReturnState = new TourReturnState
+        {
+            position = player.transform.position,
+            rotation = player.transform.rotation,
+            viewNum = viewNum,
+            looping = looping,
+            applyGravity = applyGravity,
+            platformActive = platform.activeSelf,
+            controllerEnabled = controller.enabled,
+            distance = distance,
+            panHorizontal = panHorizontal,
+            panVertical = panVertical,
+            viewFlipped = viewFlipped,
+            currentAngle = currentAngle
+        };
+    }
+
+    public void RestoreTourReturnState()
+    {
+        // The only coroutine here is the tour's MovePlayerTo flight.
+        StopAllCoroutines();
+        isMoving = false;
+
+        if (!tourReturnState.HasValue)
+            return;
+
+        TourReturnState state = tourReturnState.Value;
+        tourReturnState = null;
+
+        // The CharacterController has to be off while the transform is set
+        // directly, or it can snap the player back (see ResetPosition).
+        controller.enabled = false;
+        player.transform.position = state.position;
+        player.transform.rotation = state.rotation;
+
+        viewNum = state.viewNum;
+        looping = state.looping;
+        applyGravity = state.applyGravity;
+        platform.SetActive(state.platformActive);
+        gravText.text = applyGravity ? "Disable Gravity" : "Enable Gravity";
+        distance = state.distance;
+        panHorizontal = state.panHorizontal;
+        panVertical = state.panVertical;
+        viewFlipped = state.viewFlipped;
+        currentAngle = state.currentAngle;
+        verticalVelocity = Vector3.zero;
+
+        controller.enabled = state.controllerEnabled;
+    }
+
     public void MovePlayerTo(Vector3 targetPosition, float duration = 1.0f)
     {
         StartCoroutine(MovePlayerToCoroutine(targetPosition, duration));
@@ -81,8 +156,9 @@ public class PlayerController : MonoBehaviour
             elapsed += Time.deltaTime;
             float t = Mathf.Clamp01(elapsed / duration);
 
-            // Smooth interpolation
-            player.transform.position = Vector3.Lerp(startPosition, targetPosition, t);
+            // Eased (not linear), matching CameraController's focus/rotation
+            // transition, so the move starts and stops gently.
+            player.transform.position = Vector3.Lerp(startPosition, targetPosition, TourMotion.Ease(t));
 
             yield return null;
         }
