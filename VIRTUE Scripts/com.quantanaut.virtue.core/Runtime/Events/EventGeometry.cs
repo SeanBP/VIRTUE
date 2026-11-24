@@ -358,6 +358,9 @@ namespace VirtueCore.Events
             return (eventJetObjects, jetTimeData);
         }
 
+        // Track line width (scene units) when the file doesn't set one.
+        public const float DefaultTrackWidth = 0.04f;
+
         public static (List<GameObject>, List<float>) CreateTrackObjects(
             List<Tracks> tracks,
             float units,
@@ -389,6 +392,12 @@ namespace VirtueCore.Events
                     JsonTrackObject.color_rgba[2],
                     JsonTrackObject.color_rgba[3]
                 );
+
+                // The file's width (length unit, scaled like positions), or
+                // the standard width if it doesn't set one.
+                float lineWidth = JsonTrackObject.width >= 0f
+                    ? JsonTrackObject.width * units * scale
+                    : DefaultTrackWidth;
 
                 int q = JsonTrackObject.qOverP < 0 ? -1 : (JsonTrackObject.qOverP > 0 ? 1 : 0);
 
@@ -460,8 +469,8 @@ namespace VirtueCore.Events
                         lineRenderer.SetPosition(0, startPosition * scale);
                         lineRenderer.SetPosition(1, endPosition * scale);
 
-                        lineRenderer.startWidth = 0.04f;
-                        lineRenderer.endWidth = 0.04f;
+                        lineRenderer.startWidth = lineWidth;
+                        lineRenderer.endWidth = lineWidth;
                         lineRenderer.material = new Material(Shader.Find("Sprites/Default")) { renderQueue = RenderOrder.EventQueue };
                         lineRenderer.startColor = color;
                         lineRenderer.endColor = color;
@@ -536,8 +545,8 @@ namespace VirtueCore.Events
                         lineRenderer.SetPosition(0, startPosition * scale);
                         lineRenderer.SetPosition(1, endPosition * scale);
 
-                        lineRenderer.startWidth = 0.04f;
-                        lineRenderer.endWidth = 0.04f;
+                        lineRenderer.startWidth = lineWidth;
+                        lineRenderer.endWidth = lineWidth;
                         lineRenderer.material = new Material(Shader.Find("Sprites/Default")) { renderQueue = RenderOrder.EventQueue };
                         lineRenderer.startColor = color;
                         lineRenderer.endColor = color;

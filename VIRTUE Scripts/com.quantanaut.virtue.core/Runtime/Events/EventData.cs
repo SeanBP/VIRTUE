@@ -87,6 +87,10 @@ namespace VirtueCore.Events
         public float[] vertex = new float[] { 0f, 0f, 0f };
         public float[] duration_ns = new float[] { 0f, 100f };
         public float[] color_rgba = new float[] { 1f, 1f, 1f, 1f };
+        // Optional: line width in the file's length unit (scaled like
+        // positions and hit sizes). Negative (default) = not set, which
+        // keeps the standard track width.
+        public float width = -1f;
     }
 
     [System.Serializable]
