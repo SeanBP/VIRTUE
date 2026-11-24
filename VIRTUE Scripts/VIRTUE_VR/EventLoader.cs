@@ -79,6 +79,9 @@ public class EventLoader : MonoBehaviour
     public InputField afterField;
     private List<string> fileNames = new List<string>();
     private List<string> displayNames = new List<string>();
+    // Event files whose header has "hidden": true -- kept out of the
+    // dropdown (fileNames/displayNames) but still loadable by reference.
+    private List<string> hiddenFileNames = new List<string>();
     public TMP_Dropdown fileDropdown;
 
     private bool animating = false;
@@ -121,18 +124,47 @@ public class EventLoader : MonoBehaviour
             fileDropdown.value = initialIndex;
             OnFileSelected(initialIndex);
         }
-        else
+        else if (fileNames.Count > 0)
         {
             filename = fileNames[0];
+        }
+        else
+        {
+            // No listed event files (none at all, or all hidden): start empty.
+            ShowEmptyEvent();
+            FileSelection.ShowSelection(fileDropdown, -1);
+            return;
         }
 
         activeLoadCoroutine = StartCoroutine(LoadJSONFile());
 
     }
 
+    private Coroutine animateEventCoroutine;
+
+    // Starts a tour scene's event. Replaces any scene event that hasn't
+    // started yet, so skipping through scenes only ever plays the one the
+    // user lands on.
     public void AnimateEvent(EventSettings settings)
     {
-        StartCoroutine(AnimateEventCoroutine(settings));
+        if (animateEventCoroutine != null) StopCoroutine(animateEventCoroutine);
+        animateEventCoroutine = StartCoroutine(AnimateEventCoroutine(settings));
+    }
+
+    // Clears the current tour scene's event (and cancels one that hasn't
+    // started yet) -- used when the user leaves for another scene, whose
+    // event only starts once they have arrived.
+    public void ClearTourEvent()
+    {
+        if (animateEventCoroutine != null) StopCoroutine(animateEventCoroutine);
+        animateEventCoroutine = StartCoroutine(ClearTourEventCoroutine());
+    }
+
+    private IEnumerator ClearTourEventCoroutine()
+    {
+        yield return new WaitUntil(() => activeCoroutines == 0);
+        StartClearHits();
+        animateEventCoroutine = null;
     }
 
     private IEnumerator AnimateEventCoroutine(EventSettings settings)
@@ -159,6 +191,7 @@ public class EventLoader : MonoBehaviour
             looping = false;
             animating = false;
         }
+        animateEventCoroutine = null;
     }
 
 
@@ -255,6 +288,8 @@ public class EventLoader : MonoBehaviour
     // them.
     private void CancelAndClearCurrentLoad()
     {
+        eventGeneration++;
+
         if (activeLoadCoroutine != null)
         {
             StopCoroutine(activeLoadCoroutine);
@@ -317,18 +352,38 @@ public class EventLoader : MonoBehaviour
     public void LoadEventFile(string newFilename)
     {
         int index = FileSelection.FindIndex(fileNames, newFilename);
-        if (index < 0)
+        if (index >= 0)
         {
-            UnityEngine.Debug.LogWarning($"Event file \"{newFilename}\" not found -- leaving the event empty.");
-            CancelAndClearCurrentLoad();
-            ShowEmptyEvent();
-            FileSelection.ShowSelection(fileDropdown, -1);
-            return;
+            filename = fileNames[index];
+        }
+        else
+        {
+            // A file hidden from the list still loads when referenced.
+            int hiddenIndex = FileSelection.FindIndex(hiddenFileNames, newFilename);
+            if (hiddenIndex < 0)
+            {
+                UnityEngine.Debug.LogWarning($"Event file \"{newFilename}\" not found -- leaving the event empty.");
+                CancelAndClearCurrentLoad();
+                ShowEmptyEvent();
+                FileSelection.ShowSelection(fileDropdown, -1);
+                return;
+            }
+            filename = hiddenFileNames[hiddenIndex];
         }
 
-        FileSelection.ShowSelection(fileDropdown, index);
-        filename = fileNames[index];
+        ShowCurrentSelection();
         LoadFile(chaseCompanion: false);
+    }
+
+    // Shows the current event file in the dropdown: its entry if listed,
+    // its name (without adding an entry) if it's a hidden file, or blank.
+    private void ShowCurrentSelection()
+    {
+        int index = FileSelection.FindExact(fileNames, filename);
+        if (index < 0 && FileSelection.FindExact(hiddenFileNames, filename) >= 0)
+            FileSelection.ShowUnlisted(fileDropdown, Path.GetFileNameWithoutExtension(filename));
+        else
+            FileSelection.ShowSelection(fileDropdown, index);
     }
 
     // Puts the loader into a "no event loaded" state: one blank event slot
@@ -339,6 +394,8 @@ public class EventLoader : MonoBehaviour
     private void ShowEmptyEvent()
     {
         InitializeEventArrays(1);
+        hasEventContent = false;
+        timeText.text = "";
         headerExperiment = "";
         color_bar = "";
         SetHUD(true);
@@ -391,8 +448,15 @@ public class EventLoader : MonoBehaviour
             errorText.text = "Loading events: 0% complete";
             ParseHeader(eventDataWrapper, chaseCompanion);
 
-            int numEvents = eventDataWrapper.events.Count;
-            InitializeEventArrays(numEvents);
+            // A file with no events (an empty "events" list, or none at all)
+
+            // still gets one blank slot, since Update() and the navigation
+
+            // buttons index the per-event arrays at iEvt every frame.
+
+            int numEvents = eventDataWrapper.events != null ? eventDataWrapper.events.Count : 0;
+
+            InitializeEventArrays(Math.Max(numEvents, 1));
 
             if (eventDataWrapper.header.particles != null)
             {
@@ -469,6 +533,12 @@ public class EventLoader : MonoBehaviour
         }
 
         start_time = Time.time;
+
+        hasEventContent = EventsHaveContent();
+
+        if (!hasEventContent)
+
+            timeText.text = "";
         loadingEvent = false;
         activeLoadCoroutine = null;
         SetHUD(inTour);
@@ -558,6 +628,27 @@ public class EventLoader : MonoBehaviour
     private void ResetTimingSettings()
     {
         ApplyTimingSettings(-1f, -1f, -1f);
+    }
+
+    // False while the loaded event file has nothing to show (no particles
+    // and no hits, blocks, clusters, jets or tracks in any event) -- e.g. an
+    // empty event file a model loads when it has no real events. The time
+    // readout stays blank then, since there's no collision to count toward.
+    private bool hasEventContent = false;
+
+    private bool EventsHaveContent()
+    {
+        if (particles != null && particles.Count > 0) return true;
+        if (hitObjects == null) return false;
+
+        for (int i = 0; i < hitObjects.Length; i++)
+        {
+            if (hitObjects[i].Length > 0 || blockObjects[i].Length > 0 ||
+                clusterObjects[i].Length > 0 || jetObjects[i].Length > 0 ||
+                trackObjects[i].Count > 0)
+                return true;
+        }
+        return false;
     }
 
     private void InitializeEventArrays(int numEvents)
@@ -720,7 +811,7 @@ public class EventLoader : MonoBehaviour
                 {
                     float elapsedTime = (Time.time - start_time) * speed / c;
 
-                    timeText.text = string.Format("{0:f0}", Math.Round(elapsedTime - timeBeforeCollision)) + " ns";
+                    timeText.text = hasEventContent ? string.Format("{0:f0}", Math.Round(elapsedTime - timeBeforeCollision)) + " ns" : "";
 
                     if (looping)
                     {
@@ -986,11 +1077,19 @@ public class EventLoader : MonoBehaviour
         fileDropdown.ClearOptions();
         fileNames.Clear();
         displayNames.Clear();
+        hiddenFileNames.Clear();
 
         foreach (string file in files)
         {
             string fileName = Path.GetFileName(file); // Get the file name only
             string displayName = Path.GetFileNameWithoutExtension(file); // Display name without .json
+
+            if (FileHeaderFlags.IsHidden(file))
+            {
+                hiddenFileNames.Add(fileName);
+                continue;
+            }
+
             fileNames.Add(fileName); // Store for selection handling
             displayNames.Add(displayName); // Store display name for dropdown
         }
@@ -1006,7 +1105,7 @@ public class EventLoader : MonoBehaviour
     public void RefreshFileList()
     {
         LoadFilesIntoDropdown();
-        FileSelection.ShowSelection(fileDropdown, FileSelection.FindExact(fileNames, filename));
+        ShowCurrentSelection();
     }
 
     public void OnFileSelected(int index)
@@ -1047,9 +1146,17 @@ public class EventLoader : MonoBehaviour
         }
     }
 
+    // Bumped whenever the current event's objects are destroyed (a new
+    // load, or leaving a tour). A ClearHitsCoroutine still working through
+    // the old objects in batches then stops at its next batch -- instead of
+    // hitting a destroyed object, dying, and leaving activeCoroutines stuck
+    // above zero, which kept every later event from ever animating.
+    private int eventGeneration = 0;
+
     private IEnumerator ClearHitsCoroutine(int ievt)
     {
         activeCoroutines++;
+        int generation = eventGeneration;
         bool hitsCleared = false;
         bool clustersCleared = false;
         bool tracksCleared = false;
@@ -1081,6 +1188,7 @@ public class EventLoader : MonoBehaviour
                 }
                 localHitIndex += 1000;
                 yield return null; // Yield after processing each batch
+                if (generation != eventGeneration) { activeCoroutines--; yield break; }
             }
 
             if (!clustersCleared && localClusterIndex >= clusterObjects[ievt].Length)
@@ -1095,6 +1203,7 @@ public class EventLoader : MonoBehaviour
                 }
                 localClusterIndex += 1000;
                 yield return null;
+                if (generation != eventGeneration) { activeCoroutines--; yield break; }
             }
 
             if (!blocksCleared && localBlockIndex >= blockObjects[ievt].Length)
@@ -1109,6 +1218,7 @@ public class EventLoader : MonoBehaviour
                 }
                 localBlockIndex += 1000;
                 yield return null;
+                if (generation != eventGeneration) { activeCoroutines--; yield break; }
             }
 
             if (!jetsCleared && localJetIndex >= jetObjects[ievt].Length)
@@ -1123,6 +1233,7 @@ public class EventLoader : MonoBehaviour
                 }
                 localJetIndex += 1000;
                 yield return null;
+                if (generation != eventGeneration) { activeCoroutines--; yield break; }
             }
 
             if (!tracksCleared && localTrackIndex >= trackObjects[ievt].Count)
@@ -1137,6 +1248,7 @@ public class EventLoader : MonoBehaviour
                 }
                 localTrackIndex += 1000;
                 yield return null;
+                if (generation != eventGeneration) { activeCoroutines--; yield break; }
             }
         }
 

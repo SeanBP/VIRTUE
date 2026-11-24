@@ -56,12 +56,55 @@ namespace VirtueCore.Shared
         {
             if (dropdown == null) return;
 
+            RestorePlaceholderText(dropdown);
+
             // TMP_Dropdown only allows value -1 when a placeholder graphic is
             // assigned; otherwise it clamps -1 back to entry 0.
             if (index < 0) EnsurePlaceholder(dropdown);
 
             dropdown.SetValueWithoutNotify(index);
             dropdown.RefreshShownValue();
+        }
+
+        // Shows `label` as the current selection without it being one of the
+        // dropdown's entries -- for a loaded file that is hidden from the
+        // list. Shown through the placeholder, whose own text is put back the
+        // next time a listed entry (or nothing) is shown.
+        public static void ShowUnlisted(TMP_Dropdown dropdown, string label)
+        {
+            if (dropdown == null) return;
+
+            EnsurePlaceholder(dropdown);
+            if (dropdown.placeholder is TMP_Text text)
+            {
+                if (!originalPlaceholderText.ContainsKey(dropdown))
+                    originalPlaceholderText[dropdown] = text.text;
+                text.text = label;
+            }
+
+            dropdown.SetValueWithoutNotify(-1);
+            dropdown.RefreshShownValue();
+        }
+
+        // Placeholder text as it was before ShowUnlisted replaced it, per
+        // dropdown. Entries for dropdowns destroyed by a scene reload are
+        // dropped the next time any entry is restored.
+        private static readonly Dictionary<TMP_Dropdown, string> originalPlaceholderText = new Dictionary<TMP_Dropdown, string>();
+
+        private static void RestorePlaceholderText(TMP_Dropdown dropdown)
+        {
+            if (!originalPlaceholderText.TryGetValue(dropdown, out string original)) return;
+
+            if (dropdown.placeholder is TMP_Text text)
+                text.text = original;
+            originalPlaceholderText.Remove(dropdown);
+
+            // Unity's == null is true for destroyed objects.
+            List<TMP_Dropdown> destroyed = new List<TMP_Dropdown>();
+            foreach (TMP_Dropdown key in originalPlaceholderText.Keys)
+                if (key == null) destroyed.Add(key);
+            foreach (TMP_Dropdown key in destroyed)
+                originalPlaceholderText.Remove(key);
         }
 
         private static void EnsurePlaceholder(TMP_Dropdown dropdown)

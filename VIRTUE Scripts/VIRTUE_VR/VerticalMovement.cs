@@ -37,6 +37,9 @@ public class VerticalMovement : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
+        // A tour is moving the rig -- see SetLocomotionEnabled.
+        if (!locomotionEnabled || controller == null || !controller.enabled)
+            return;
 
        float vertMag = 0f;
 
@@ -56,6 +59,33 @@ public class VerticalMovement : MonoBehaviour
     
     }
 
+    private bool locomotionEnabled = true;
+
+    // Turned off while a tour moves the rig between scenes, then back on.
+    // Off, nothing else moves or turns the rig: the joystick (move, turn,
+    // vertical) can't fight the tour's motion, and the CharacterController
+    // -- which would otherwise snap a directly-moved transform back, and
+    // push against model colliders along the way -- is disabled.
+    public void SetLocomotionEnabled(bool enabled)
+    {
+        if (locomotionEnabled == enabled)
+            return;
+        locomotionEnabled = enabled;
+
+        if (controller != null) controller.enabled = enabled;
+        if (moveProvider != null) moveProvider.enabled = enabled;
+
+        if (enabled)
+        {
+            UpdateTurnMode();
+        }
+        else
+        {
+            if (continuousTurnProvider != null) continuousTurnProvider.enabled = false;
+            if (snapTurnProvider != null) snapTurnProvider.enabled = false;
+        }
+    }
+
     public void ChangeSpeed(float speed)
     {
         moveProvider.moveSpeed = speed;
@@ -65,7 +95,11 @@ public class VerticalMovement : MonoBehaviour
     public void ToggleTurnMode()
     {
         isSmoothTurning = !isSmoothTurning;
-        UpdateTurnMode();
+        // Mid tour-move, the new mode takes effect when locomotion returns.
+        if (locomotionEnabled)
+            UpdateTurnMode();
+        else
+            turnButtonText.text = isSmoothTurning ? "Snap Turn" : "Smooth Turn";
     }
 
     private void UpdateTurnMode()

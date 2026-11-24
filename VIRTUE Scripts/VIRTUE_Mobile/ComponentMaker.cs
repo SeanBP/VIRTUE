@@ -64,6 +64,9 @@ public class ComponentMaker : MonoBehaviour
     public GameObject figures;
     public UnityEngine.UI.Text figureText;
     List<int> jsonFileIndexes = new List<int>();
+    // Model files whose header has "hidden": true -- kept out of the
+    // dropdown (fileNames/displayNames) but still loadable by reference.
+    private List<string> hiddenFileNames = new List<string>();
     List<int> objectIndexes = new List<int>();
     public GameObject models;
     private List<float> detectorPartAlphas = new List<float>();
@@ -572,15 +575,45 @@ public class ComponentMaker : MonoBehaviour
     public void LoadModelFile(string newFilename)
     {
         int index = FileSelection.FindIndex(fileNames, newFilename);
-        if (index < 0)
+        if (index >= 0)
         {
-            ClearMissingModel(newFilename);
-            return;
+            filename = fileNames[index];
+        }
+        else
+        {
+            // A file hidden from the list still loads when referenced.
+            int hiddenIndex = FileSelection.FindIndex(hiddenFileNames, newFilename);
+            if (hiddenIndex < 0)
+            {
+                ClearMissingModel(newFilename);
+                return;
+            }
+            filename = hiddenFileNames[hiddenIndex];
         }
 
-        FileSelection.ShowSelection(fileDropdown, index);
-        filename = fileNames[index];
+        ShowCurrentSelection();
         LoadFile(chaseCompanion: false);
+    }
+
+    // Shows the current model in the dropdown: its entry if listed, its
+    // name (without adding an entry) if it's a hidden file, or blank.
+    private void ShowCurrentSelection()
+    {
+        int index = FileSelection.FindExact(fileNames, filename);
+        if (index < 0 && FileSelection.FindExact(hiddenFileNames, filename) >= 0)
+            FileSelection.ShowUnlisted(fileDropdown, filename);
+        else
+            FileSelection.ShowSelection(fileDropdown, index);
+    }
+
+    // The hidden model `filename` refers to, or null if it isn't one. Hidden
+    // models have no dropdown entry, so BuildSimModel can't find them
+    // through the selected index like listed ones.
+    private string HiddenModelForCurrentFile()
+    {
+        if (FileSelection.FindIndex(fileNames, filename) >= 0) return null;
+        int hiddenIndex = FileSelection.FindIndex(hiddenFileNames, filename);
+        return hiddenIndex >= 0 ? hiddenFileNames[hiddenIndex] : null;
     }
 
     // Empties the scene of the current model and its title text, for a
@@ -678,9 +711,18 @@ public class ComponentMaker : MonoBehaviour
         ResetModelState();  // Call the new method to reset everything
 
         int selectedIndex = fileDropdown.value;
+        string hiddenModel = HiddenModelForCurrentFile();
 
+        if (hiddenModel != null)
+        {
+            TextAsset jsonFile = Resources.LoadAll<TextAsset>("Models").FirstOrDefault(f => f.name == hiddenModel);
+            if (jsonFile != null)
+            {
+                LoadJsonFile(jsonFile, chaseCompanion);
+            }
+        }
         // Check if the selected index matches a JSON file or a 3D model
-        if (jsonFileIndexes.Contains(selectedIndex))
+        else if (jsonFileIndexes.Contains(selectedIndex))
         {
             // Load JSON file
             TextAsset[] files = Resources.LoadAll<TextAsset>("Models");
@@ -827,6 +869,7 @@ public class ComponentMaker : MonoBehaviour
         displayNames.Clear();
         jsonFileIndexes.Clear();
         objectIndexes.Clear();
+        hiddenFileNames.Clear();
 
         // Add child object names from "3DModels"
         GameObject modelsParent = GameObject.Find("Models");
@@ -849,6 +892,13 @@ public class ComponentMaker : MonoBehaviour
         foreach (TextAsset file in files)
         {
             string fileName = file.name;
+
+            if (FileHeaderFlags.IsHiddenJson(file.text))
+            {
+                hiddenFileNames.Add(fileName);
+                continue;
+            }
+
             fileNames.Add(fileName);
             displayNames.Add(fileName);
             jsonFileIndexes.Add(displayNames.Count - 1); // Track JSON file index

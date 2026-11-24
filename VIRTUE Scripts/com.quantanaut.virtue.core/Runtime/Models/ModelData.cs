@@ -24,6 +24,10 @@ namespace VirtueCore.Models
         // this back, so the event file the user actually selected always
         // takes precedence and the two headers can't loop off each other.
         public string event_file = "";
+        // Optional: true leaves this file out of the model dropdown; it can
+        // still be loaded by an event file's header.model_file or a tour.
+        // Read by FileHeaderFlags when the list is built.
+        public bool hidden = false;
     }
 
     [System.Serializable]

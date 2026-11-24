@@ -60,5 +60,69 @@ namespace VirtueCore.Tours
 
             return Quaternion.LookRotation(direction, up);
         }
+
+        // A smooth move from a starting state (value, velocity, acceleration)
+        // to a resting end value over a fixed duration (a quintic Hermite
+        // curve). It ends with zero velocity and acceleration. Starting from
+        // rest it is exactly the Ease curve above. Starting from the state of a move
+        // already under way, it continues that motion without any jump in
+        // speed or acceleration -- so a move can be redirected mid-flight
+        // without a jolt (which matters in VR, where the user is the camera).
+        // The four components are free for any values to animate together
+        // (e.g. a position plus an angle).
+        public struct MotionSegment
+        {
+            private Vector4 p0, v0, a0, p1;
+            private float duration;
+
+            public float Duration { get { return duration; } }
+
+            public MotionSegment(Vector4 start, Vector4 startVelocity, Vector4 startAcceleration,
+                                 Vector4 end, float duration)
+            {
+                this.duration = Mathf.Max(duration, 1e-4f);
+                p0 = start;
+                p1 = end;
+                // Velocity and acceleration in "per unit of the curve
+                // parameter" terms.
+                v0 = startVelocity * this.duration;
+                a0 = startAcceleration * (this.duration * this.duration);
+            }
+
+            // State at `time` seconds in; clamped to the end once finished.
+            public void Evaluate(float time, out Vector4 value, out Vector4 velocity, out Vector4 acceleration)
+            {
+                if (time >= duration)
+                {
+                    value = p1;
+                    velocity = Vector4.zero;
+                    acceleration = Vector4.zero;
+                    return;
+                }
+
+                float s = Mathf.Max(0f, time / duration);
+                float s2 = s * s, s3 = s2 * s, s4 = s3 * s, s5 = s4 * s;
+
+                // Basis functions (end velocity/acceleration are zero).
+                float h0 = 1f - 10f * s3 + 15f * s4 - 6f * s5;
+                float h1 = s - 6f * s3 + 8f * s4 - 3f * s5;
+                float h2 = 0.5f * s2 - 1.5f * s3 + 1.5f * s4 - 0.5f * s5;
+                float h5 = 10f * s3 - 15f * s4 + 6f * s5;
+
+                float d0 = -30f * s2 + 60f * s3 - 30f * s4;
+                float d1 = 1f - 18f * s2 + 32f * s3 - 15f * s4;
+                float d2 = s - 4.5f * s2 + 6f * s3 - 2.5f * s4;
+                float d5 = 30f * s2 - 60f * s3 + 30f * s4;
+
+                float e0 = -60f * s + 180f * s2 - 120f * s3;
+                float e1 = -36f * s + 96f * s2 - 60f * s3;
+                float e2 = 1f - 9f * s + 18f * s2 - 10f * s3;
+                float e5 = 60f * s - 180f * s2 + 120f * s3;
+
+                value = h0 * p0 + h1 * v0 + h2 * a0 + h5 * p1;
+                velocity = (d0 * p0 + d1 * v0 + d2 * a0 + d5 * p1) / duration;
+                acceleration = (e0 * p0 + e1 * v0 + e2 * a0 + e5 * p1) / (duration * duration);
+            }
+        }
     }
 }

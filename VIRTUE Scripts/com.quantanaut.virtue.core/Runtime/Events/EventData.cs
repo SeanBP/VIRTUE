@@ -29,6 +29,10 @@ namespace VirtueCore.Events
         public float time_before = -1f;
         public float time_after = -1f;
         public float speed = -1f;
+        // Optional: true leaves this file out of the event dropdown; it can
+        // still be loaded by a model file's header.event_file or a tour.
+        // Read by FileHeaderFlags when the list is built.
+        public bool hidden = false;
     }
 
     [System.Serializable]

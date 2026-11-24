@@ -44,6 +44,9 @@ public class ComponentMaker : MonoBehaviour
     private List<string> compatibleVersions = new List<string> { "3.2.0", "3.2.1", "3.2.2" };
     private List<string> fileNames = new List<string>();
     private List<string> displayNames = new List<string>();
+    // Model files whose header has "hidden": true -- kept out of the
+    // dropdown (fileNames/displayNames) but still loadable by reference.
+    private List<string> hiddenFileNames = new List<string>();
     public TMP_Dropdown fileDropdown;
     public Slider explodeSlider;
     private float lastSliderValue = 1;
@@ -476,15 +479,35 @@ public class ComponentMaker : MonoBehaviour
     public void LoadModelFile(string newFilename)
     {
         int index = FileSelection.FindIndex(fileNames, newFilename);
-        if (index < 0)
+        if (index >= 0)
         {
-            ClearMissingModel(newFilename);
-            return;
+            filename = fileNames[index];
+        }
+        else
+        {
+            // A file hidden from the list still loads when referenced.
+            int hiddenIndex = FileSelection.FindIndex(hiddenFileNames, newFilename);
+            if (hiddenIndex < 0)
+            {
+                ClearMissingModel(newFilename);
+                return;
+            }
+            filename = hiddenFileNames[hiddenIndex];
         }
 
-        FileSelection.ShowSelection(fileDropdown, index);
-        filename = fileNames[index];
+        ShowCurrentSelection();
         LoadFile(chaseCompanion: false);
+    }
+
+    // Shows the current model in the dropdown: its entry if listed, its
+    // name (without adding an entry) if it's a hidden file, or blank.
+    private void ShowCurrentSelection()
+    {
+        int index = FileSelection.FindExact(fileNames, filename);
+        if (index < 0 && FileSelection.FindExact(hiddenFileNames, filename) >= 0)
+            FileSelection.ShowUnlisted(fileDropdown, Path.GetFileNameWithoutExtension(filename));
+        else
+            FileSelection.ShowSelection(fileDropdown, index);
     }
 
     // Empties the scene of the current model and its title text, for a
@@ -760,6 +783,7 @@ public class ComponentMaker : MonoBehaviour
         fileDropdown.ClearOptions();
         fileNames.Clear();
         displayNames.Clear();
+        hiddenFileNames.Clear();
         objectIndexes.Clear();
 
         // Add child object names from "3DModels"
@@ -792,6 +816,12 @@ public class ComponentMaker : MonoBehaviour
                 string fileName = Path.GetFileName(file); // Get the file name only
                 string displayName = Path.GetFileNameWithoutExtension(file); // Display name without extension
 
+                if (extension == ".json" && FileHeaderFlags.IsHidden(file))
+                {
+                    hiddenFileNames.Add(fileName);
+                    continue;
+                }
+
                 fileNames.Add(fileName); // Store for selection handling
                 displayNames.Add(displayName); // Add to dropdown
             }
@@ -810,7 +840,7 @@ public class ComponentMaker : MonoBehaviour
     public void RefreshFileList()
     {
         LoadFilesIntoDropdown();
-        FileSelection.ShowSelection(fileDropdown, FileSelection.FindExact(fileNames, filename));
+        ShowCurrentSelection();
     }
 
     public void OnFileSelected(int index)
