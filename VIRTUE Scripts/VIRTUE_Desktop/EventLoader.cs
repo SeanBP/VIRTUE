@@ -118,7 +118,7 @@ public class EventLoader : MonoBehaviour
         componentMaker = FindAnyObjectByType<ComponentMaker>();
 
         LoadFilesIntoDropdown();
-        int initialIndex = fileNames.IndexOf(filename);
+        int initialIndex = FileSelection.FindIndex(fileNames, filename);
         if (initialIndex != -1)
         {
             fileDropdown.value = initialIndex;
@@ -284,7 +284,7 @@ public class EventLoader : MonoBehaviour
         yield return new WaitUntil(() => loadingEvent == false);
         autoAnimate = false;
         lastFilename = filename;
-        filename = newFilename;
+        filename = ResolveFileReference(newFilename);
 
         LoadFile();
         SetHUD();
@@ -457,9 +457,30 @@ public class EventLoader : MonoBehaviour
     {
         int index = FileSelection.FindExact(fileNames, filename);
         if (index < 0 && FileSelection.FindExact(hiddenFileNames, filename) >= 0)
-            FileSelection.ShowUnlisted(fileDropdown, Path.GetFileNameWithoutExtension(filename));
+            FileSelection.ShowUnlisted(fileDropdown, FileListing.DisplayName(filename));
         else
             FileSelection.ShowSelection(fileDropdown, index);
+    }
+
+    private static string EventsFolder
+    {
+        get { return Path.Combine(UnityEngine.Application.streamingAssetsPath, "Events"); }
+    }
+
+    // The list entry a file reference points to -- a bare name, a path
+    // relative to Events (files can be in subfolders), or an absolute path
+    // inside Events -- including hidden files. Unchanged if nothing matches.
+    private string ResolveFileReference(string reference)
+    {
+        string relative = FileListing.ToRelative(EventsFolder, reference);
+
+        int index = FileSelection.FindIndex(fileNames, relative);
+        if (index >= 0) return fileNames[index];
+
+        index = FileSelection.FindIndex(hiddenFileNames, relative);
+        if (index >= 0) return hiddenFileNames[index];
+
+        return reference;
     }
 
     // Puts the loader into a "no event loaded" state: one blank event slot
@@ -493,8 +514,8 @@ public class EventLoader : MonoBehaviour
     public IEnumerator LoadJSONFile(bool chaseCompanion = true)
     {
         loadingEvent = true;
-        string path = Path.Combine(UnityEngine.Application.streamingAssetsPath, "Events");
-        string filePath = Path.Combine(path, filename);
+        string path = EventsFolder;
+        string filePath = FileListing.FullPath(path, filename);
         EventDataWrapper eventDataWrapper = null;
         errorText.text = "Reading event file";
         yield return null;
@@ -1116,8 +1137,10 @@ public class EventLoader : MonoBehaviour
             return;
         }
 
-        // Get all .json files
-        string[] files = Directory.GetFiles(path, "*.json");
+        // All .json files in Events and its subfolders, as paths relative to
+        // Events ("LHC/run1.json"); top-level files keep plain names.
+        List<string> files = FileListing.ListFiles(path,
+            file => string.Equals(Path.GetExtension(file), ".json", StringComparison.OrdinalIgnoreCase));
 
         // Clear existing options and populate new ones
         fileDropdown.ClearOptions();
@@ -1125,10 +1148,10 @@ public class EventLoader : MonoBehaviour
         displayNames.Clear();
         hiddenFileNames.Clear();
 
-        foreach (string file in files)
+        foreach (string fileName in files)
         {
-            string fileName = Path.GetFileName(file); // Get the file name only
-            string displayName = Path.GetFileNameWithoutExtension(file); // Display name without .json
+            string file = FileListing.FullPath(path, fileName);
+            string displayName = FileListing.DisplayName(fileName); // "LHC/run1"
 
             if (FileHeaderFlags.IsHidden(file))
             {

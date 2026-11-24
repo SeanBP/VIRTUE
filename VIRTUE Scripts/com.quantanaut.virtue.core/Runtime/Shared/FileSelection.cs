@@ -19,33 +19,67 @@ namespace VirtueCore.Shared
         // exact match, entry == reference minus extension, entry minus
         // extension == reference, then both minus extension. All
         // case-insensitive. Returns -1 if nothing matches.
+        //
+        // Entries can be in subfolders ("LHC/ATLAS.json", see FileListing).
+        // A reference that includes a folder is first matched against the
+        // whole relative path (the same four ways); then -- and for a
+        // reference that is just a file name -- against entries' file names
+        // alone, so "ATLAS.json" still finds "LHC/ATLAS.json". Lists put
+        // top-level files first, so a top-level file wins a name clash.
         public static int FindIndex(IList<string> names, string requested)
         {
             if (names == null || string.IsNullOrWhiteSpace(requested))
                 return -1;
 
-            string req = Path.GetFileName(requested.Trim());
-            string reqStem = Path.GetFileNameWithoutExtension(req);
+            string reqPath = PathKey(requested);
+            int index = -1;
 
-            int index = Find(names, n => Same(n, req));
-            if (index < 0) index = Find(names, n => Same(n, reqStem));
-            if (index < 0) index = Find(names, n => Same(Path.GetFileNameWithoutExtension(n), req));
-            if (index < 0) index = Find(names, n => Same(Path.GetFileNameWithoutExtension(n), reqStem));
+            if (reqPath.Contains("/"))
+                index = FindByName(names, reqPath, PathKey);
+
+            if (index < 0)
+                index = FindByName(names, Path.GetFileName(reqPath), n => Path.GetFileName(PathKey(n)));
+
             return index;
         }
 
-        // Exact (case-insensitive) match on the file name only, ignoring any
-        // folder in `requested`. Used to re-find the current file after the
-        // list is refreshed, where FindIndex's extension-insensitive
-        // fallbacks could wrongly pick e.g. foo.json after foo.fbx was
-        // deleted.
+        // Exact (case-insensitive) match on the whole relative path. Used to
+        // re-find the current file after the list is refreshed, where
+        // FindIndex's extension-insensitive fallbacks could wrongly pick e.g.
+        // foo.json after foo.fbx was deleted (or a same-named file in
+        // another folder). An absolute path is matched on its file name.
         public static int FindExact(IList<string> names, string requested)
         {
             if (names == null || string.IsNullOrWhiteSpace(requested))
                 return -1;
 
-            string req = Path.GetFileName(requested.Trim());
-            return Find(names, n => Same(n, req));
+            if (Path.IsPathRooted(requested.Trim()))
+            {
+                string name = Path.GetFileName(PathKey(requested));
+                return Find(names, n => Same(PathKey(n), name));
+            }
+
+            string req = PathKey(requested);
+            return Find(names, n => Same(PathKey(n), req));
+        }
+
+        // The four-way extension-tolerant match described above, comparing
+        // `req` with key(entry).
+        private static int FindByName(IList<string> names, string req, Func<string, string> key)
+        {
+            string reqStem = FileListing.StripExtension(req);
+
+            int index = Find(names, n => Same(key(n), req));
+            if (index < 0) index = Find(names, n => Same(key(n), reqStem));
+            if (index < 0) index = Find(names, n => Same(FileListing.StripExtension(key(n)), req));
+            if (index < 0) index = Find(names, n => Same(FileListing.StripExtension(key(n)), reqStem));
+            return index;
+        }
+
+        // '/' separators, no leading "./" or '/'.
+        private static string PathKey(string path)
+        {
+            return FileListing.Normalize(path).TrimStart('/');
         }
 
         // Shows the given entry as selected without firing onValueChanged

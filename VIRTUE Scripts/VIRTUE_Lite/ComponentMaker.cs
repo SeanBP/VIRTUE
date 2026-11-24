@@ -86,7 +86,7 @@ public class ComponentMaker : MonoBehaviour
 
         figures.SetActive(false);
         LoadFilesIntoDropdown();
-        int initialIndex = fileNames.IndexOf("EIC_ePIC.json");
+        int initialIndex = FileSelection.FindIndex(fileNames, "EIC_ePIC.json");
         if (initialIndex != -1)
         {
             fileDropdown.value = initialIndex;
@@ -188,7 +188,7 @@ public class ComponentMaker : MonoBehaviour
         // Set filename and start loading the model. A tour manages its own
         // model/event pairing explicitly (per-scene), so don't chase this
         // model's header.event_file.
-        filename = newFilename;
+        filename = ResolveFileReference(newFilename);
         LoadFile(chaseCompanion: false);  // This should set loadingModel = true internally
 
         // Wait until loading is done
@@ -588,9 +588,30 @@ public class ComponentMaker : MonoBehaviour
     {
         int index = FileSelection.FindExact(fileNames, filename);
         if (index < 0 && FileSelection.FindExact(hiddenFileNames, filename) >= 0)
-            FileSelection.ShowUnlisted(fileDropdown, Path.GetFileNameWithoutExtension(filename));
+            FileSelection.ShowUnlisted(fileDropdown, FileListing.DisplayName(filename));
         else
             FileSelection.ShowSelection(fileDropdown, index);
+    }
+
+    private static string ModelsFolder
+    {
+        get { return Path.Combine(UnityEngine.Application.streamingAssetsPath, "Models"); }
+    }
+
+    // The list entry a file reference points to -- a bare name, a path
+    // relative to Models (files can be in subfolders), or an absolute path
+    // inside Models -- including hidden files. Unchanged if nothing matches.
+    private string ResolveFileReference(string reference)
+    {
+        string relative = FileListing.ToRelative(ModelsFolder, reference);
+
+        int index = FileSelection.FindIndex(fileNames, relative);
+        if (index >= 0) return fileNames[index];
+
+        index = FileSelection.FindIndex(hiddenFileNames, relative);
+        if (index >= 0) return hiddenFileNames[index];
+
+        return reference;
     }
 
     // Empties the scene of the current model and its title text, for a
@@ -699,8 +720,8 @@ public class ComponentMaker : MonoBehaviour
 
         int selectedIndex = fileDropdown.value;
 
-        string path = Path.Combine(UnityEngine.Application.streamingAssetsPath, "Models");
-        string filePath = Path.Combine(path, filename);
+        string path = ModelsFolder;
+        string filePath = FileListing.FullPath(path, filename);
 
         try
         {
@@ -892,28 +913,24 @@ public class ComponentMaker : MonoBehaviour
             UnityEngine.Debug.LogWarning("Models GameObject not found in the scene.");
         }
 
-        // Retrieve all files in the directory
-        string[] allFiles = Directory.GetFiles(path);
+        // All accepted files in Models and its subfolders, as paths relative
+        // to Models ("LHC/ATLAS.json"); top-level files keep plain names.
+        List<string> allFiles = FileListing.ListFiles(path,
+            file => acceptedExtensions.Contains(Path.GetExtension(file).ToLower()));
 
-        foreach (string file in allFiles)
+        foreach (string fileName in allFiles)
         {
-            string extension = Path.GetExtension(file).ToLower();
+            string file = FileListing.FullPath(path, fileName);
+            string extension = Path.GetExtension(fileName).ToLower();
 
-            // Check if the file has an accepted extension
-            if (acceptedExtensions.Contains(extension))
+            if (extension == ".json" && FileHeaderFlags.IsHidden(file))
             {
-                string fileName = Path.GetFileName(file); // Get the file name only
-                string displayName = Path.GetFileNameWithoutExtension(file); // Display name without extension
-
-                if (extension == ".json" && FileHeaderFlags.IsHidden(file))
-                {
-                    hiddenFileNames.Add(fileName);
-                    continue;
-                }
-
-                fileNames.Add(fileName); // Store for selection handling
-                displayNames.Add(displayName); // Add to dropdown
+                hiddenFileNames.Add(fileName);
+                continue;
             }
+
+            fileNames.Add(fileName); // Store for selection handling
+            displayNames.Add(FileListing.DisplayName(fileName)); // "LHC/ATLAS"
         }
 
 

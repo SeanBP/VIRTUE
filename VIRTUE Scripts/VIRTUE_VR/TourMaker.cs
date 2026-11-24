@@ -67,15 +67,18 @@ public class TourMaker : MonoBehaviour
             return;
         }
 
-        string[] files = Directory.GetFiles(path, "*.json");
+        // Tours in Tours and its subfolders; subfolder tours are labelled
+        // with their folder ("LHC/ATLAS_Tour").
+        List<string> files = FileListing.ListFiles(path,
+            file => string.Equals(Path.GetExtension(file), ".json", System.StringComparison.OrdinalIgnoreCase));
         tourDropdown.ClearOptions();
         tourFiles.Clear();
         List<string> displayNames = new List<string>();
 
-        foreach (string file in files)
+        foreach (string relative in files)
         {
-            tourFiles.Add(file);
-            displayNames.Add(Path.GetFileNameWithoutExtension(file));
+            tourFiles.Add(FileListing.FullPath(path, relative));
+            displayNames.Add(FileListing.DisplayName(relative));
         }
 
         tourDropdown.AddOptions(displayNames);
@@ -185,8 +188,9 @@ public class TourMaker : MonoBehaviour
         // Load model
         if (!string.IsNullOrEmpty(currentTour.header.model_file))
         {
-            string modelFilePath = Path.Combine(Application.streamingAssetsPath, "Models", currentTour.header.model_file);
-            componentMaker.LoadTourFile(modelFilePath);
+            // Resolved by ComponentMaker like any other model reference, so
+            // it can be a plain name or include a subfolder.
+            componentMaker.LoadTourFile(currentTour.header.model_file);
             while (componentMaker.loadingModel)
                 yield return null;
         }
