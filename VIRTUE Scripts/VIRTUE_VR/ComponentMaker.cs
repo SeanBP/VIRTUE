@@ -155,10 +155,19 @@ public class ComponentMaker : MonoBehaviour
     }
 
 
+    // Fades to a tour scene's components. A newer call (the user skipping
+    // ahead) replaces a fade still in progress; it starts from whatever
+    // alphas that fade had reached, so nothing jumps.
+    private Coroutine activateComponentsCoroutine;
+
     public void ActivateComponents(ModelSettings modelSettings)
     {
-        StartCoroutine(ActivateComponentsCoroutine(modelSettings));
+        if (activateComponentsCoroutine != null) StopCoroutine(activateComponentsCoroutine);
+        activateComponentsCoroutine = StartCoroutine(ActivateComponentsCoroutine(modelSettings));
     }
+
+    // Part lookups for ComponentFade, kept for the current model.
+    private ComponentFade.Cache componentFadeCache;
 
     private IEnumerator ActivateComponentsCoroutine(ModelSettings modelSettings)
     {
@@ -166,121 +175,33 @@ public class ComponentMaker : MonoBehaviour
         while (loadingModel)
             yield return null;
 
+        if (componentFadeCache == null || !componentFadeCache.Matches(detectorParts))
+            yield return ComponentFade.BuildCache(detectorParts, cache => componentFadeCache = cache);
+
         bool activateAll = modelSettings.all_components;
 
-        // Build HashSet for line-active components
-        HashSet<int> lineActiveSet = new HashSet<int>();
-        if (modelSettings.lines_active != null && modelSettings.lines_active.Count > 0)
-            lineActiveSet = new HashSet<int>(modelSettings.lines_active);
+        HashSet<int> lineActiveSet = modelSettings.lines_active != null
+            ? new HashSet<int>(modelSettings.lines_active)
+            : new HashSet<int>();
 
-        // Create selection set
         HashSet<int> selected = null;
         if (!activateAll && modelSettings.components != null && modelSettings.components.Count > 0)
             selected = new HashSet<int>(modelSettings.components);
 
-        float duration = 0.5f;
-        float t = 0f;
-
-        List<float> startAlphas = new List<float>();
-        List<List<float>> lineStartAlphas = new List<List<float>>();
-
-        // Capture starting alpha values
-        for (int i = 0; i < detectorParts.Count; i++)
+        // Where each part (and its lines) should end up.
+        int count = detectorParts.Count;
+        float[] meshTargets = new float[count];
+        float[] lineTargets = new float[count];
+        for (int i = 0; i < count; i++)
         {
-            GameObject part = detectorParts[i];
-
-            Renderer renderer = part.GetComponent<Renderer>();
-            startAlphas.Add(renderer != null ? renderer.material.color.a : 0f);
-
-            LineRenderer[] partLines = part.GetComponentsInChildren<LineRenderer>();
-            List<float> lineAlphas = new List<float>();
-
-            foreach (var line in partLines)
-                lineAlphas.Add(line.startColor.a);
-
-            lineStartAlphas.Add(lineAlphas);
-        }
-
-        // Fade
-        while (t < duration)
-        {
-            t += Time.deltaTime;
-            float lerp = t / duration;
-
-            for (int i = 0; i < detectorParts.Count; i++)
-            {
-                GameObject part = detectorParts[i];
-                bool isSelected = activateAll || (selected != null && selected.Contains(i));
-
-                // Mesh alpha
-                Renderer renderer = part.GetComponent<Renderer>();
-                if (renderer != null)
-                {
-                    float start = startAlphas[i];
-                    float target = isSelected ? detectorPartAlphas[i] : 0f;
-
-                    Color c = renderer.material.color;
-                    c.a = Mathf.Lerp(start, target, lerp);
-                    renderer.material.color = c;
-                }
-
-                // Line alpha
-                LineRenderer[] partLines = part.GetComponentsInChildren<LineRenderer>();
-                for (int j = 0; j < partLines.Length; j++)
-                {
-                    float startAlpha = lineStartAlphas[i][j];
-                    bool showLine = isSelected && lineActiveSet.Contains(i);
-                    float targetAlpha = showLine ? 1f : 0f;
-
-                    LineRenderer line = partLines[j];
-
-                    Color sc = line.startColor;
-                    Color ec = line.endColor;
-
-                    sc.a = Mathf.Lerp(startAlpha, targetAlpha, lerp);
-                    ec.a = Mathf.Lerp(startAlpha, targetAlpha, lerp);
-
-                    line.startColor = sc;
-                    line.endColor = ec;
-                }
-            }
-
-            yield return null;
-        }
-
-        // Snap final values
-        for (int i = 0; i < detectorParts.Count; i++)
-        {
-            GameObject part = detectorParts[i];
             bool isSelected = activateAll || (selected != null && selected.Contains(i));
-
-            // Mesh
-            Renderer renderer = part.GetComponent<Renderer>();
-            if (renderer != null)
-            {
-                Color c = renderer.material.color;
-                c.a = isSelected ? detectorPartAlphas[i] : 0f;
-                renderer.material.color = c;
-            }
-
-            // Lines (FIXED: re-fetch lines here)
-            LineRenderer[] partLines = part.GetComponentsInChildren<LineRenderer>();
-
-            bool showLineFinal = isSelected && lineActiveSet.Contains(i);
-            float targetAlphaFinal = showLineFinal ? 1f : 0f;
-
-            foreach (var line in partLines)
-            {
-                Color sc = line.startColor;
-                Color ec = line.endColor;
-
-                sc.a = targetAlphaFinal;
-                ec.a = targetAlphaFinal;
-
-                line.startColor = sc;
-                line.endColor = ec;
-            }
+            meshTargets[i] = isSelected && i < detectorPartAlphas.Count ? detectorPartAlphas[i] : 0f;
+            lineTargets[i] = isSelected && lineActiveSet.Contains(i) ? 1f : 0f;
         }
+
+        // Spread over frames within a budget, so a scene that changes many
+        // parts doesn't stall the camera moving to it.
+        yield return ComponentFade.Fade(componentFadeCache, meshTargets, lineTargets, 0.5f);
     }
 
 
