@@ -1197,7 +1197,7 @@ public class EventLoader : MonoBehaviour
             particles[i].GetComponent<Renderer>().enabled = false;
         }
 
-        while (!hitsCleared || !clustersCleared || !tracksCleared || !jetsCleared)
+        while (!hitsCleared || !clustersCleared || !tracksCleared || !jetsCleared || !blocksCleared)
         {
             if (!hitsCleared && localHitIndex >= hitObjects[ievt].Length)
             {
