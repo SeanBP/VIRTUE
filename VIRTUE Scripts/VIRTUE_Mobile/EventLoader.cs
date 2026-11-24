@@ -481,7 +481,7 @@ public class EventLoader : MonoBehaviour
             fileContents = jsonFile.text;
 
             // Parse JSON file to EventDataWrapper class
-            eventDataWrapper = JsonUtility.FromJson<EventDataWrapper>(fileContents);
+            eventDataWrapper = EventFile.FromJson(fileContents);
 
             // Store header data into public variables
 
@@ -544,7 +544,7 @@ public class EventLoader : MonoBehaviour
 
                 if (eventOk)
                 {
-                    try { (blockObjects[i], blockTime[i]) = EventGeometry.CreateBlockObjects(eventDataWrapper.events[i].blocks, totScale, MakeMaterial); }
+                    try { (blockObjects[i], blockTime[i]) = EventGeometry.CreateBlockObjects(eventDataWrapper.events[i], totScale, MakeMaterial); }
                     catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 }
                 yield return null;
@@ -629,7 +629,7 @@ public class EventLoader : MonoBehaviour
             fileContents = jsonFile.text;
 
             // Parse JSON file to EventDataWrapper class
-            eventDataWrapper = JsonUtility.FromJson<EventDataWrapper>(fileContents);
+            eventDataWrapper = EventFile.FromJson(fileContents);
 
             // Store header data into public variables
 
@@ -686,7 +686,7 @@ public class EventLoader : MonoBehaviour
 
                 if (eventOk)
                 {
-                    try { (blockObjects[i], blockTime[i]) = EventGeometry.CreateBlockObjects(eventDataWrapper.events[i].blocks, totScale, MakeMaterial); }
+                    try { (blockObjects[i], blockTime[i]) = EventGeometry.CreateBlockObjects(eventDataWrapper.events[i], totScale, MakeMaterial); }
                     catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 }
                 yield return null;

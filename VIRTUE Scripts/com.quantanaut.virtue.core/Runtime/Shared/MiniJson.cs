@@ -16,6 +16,26 @@ namespace VirtueCore.Shared
     // Throws FormatException on malformed input.
     public static class MiniJson
     {
+        // [[x, y, z], ...] (as parsed) -> float[][]; anything that isn't a
+        // list of numeric lists becomes null so the caller can report it.
+        public static float[][] ReadPoints(object value)
+        {
+            if (!(value is List<object> list)) return null;
+
+            var points = new float[list.Count][];
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (!(list[i] is List<object> point)) return null;
+                points[i] = new float[point.Count];
+                for (int j = 0; j < point.Count; j++)
+                {
+                    if (!(point[j] is double number)) return null;
+                    points[i][j] = (float)number;
+                }
+            }
+            return points;
+        }
+
         public static object Parse(string json)
         {
             if (json == null) throw new ArgumentNullException(nameof(json));

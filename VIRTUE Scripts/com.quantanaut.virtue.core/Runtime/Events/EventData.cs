@@ -110,6 +110,22 @@ namespace VirtueCore.Events
         public float[] color_rgba = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
     }
 
+    // An 8-cornered solid, like the model file's "hexahedron" component:
+    // vertices are 8 [x, y, z] corners in a local frame (front face 0-3,
+    // back face 4-7 in the same winding), placed by position and
+    // euler_angles_deg exactly as a block is.
+    [System.Serializable]
+    public class Hexahedrons
+    {
+        public float[] position = new float[] { 0f, 0f, 0f };
+        public float[] euler_angles_deg = new float[] { 0f, 0f, 0f };
+        public float time_ns = 0f;
+        public float[] color_rgba = new float[] { 0.5f, 0.5f, 0.5f, 0.5f };
+        // Nested array -- JsonUtility can't read it, so EventFile.FromJson
+        // fills it in with a second pass.
+        [System.NonSerialized] public float[][] vertices;
+    }
+
     [System.Serializable]
     public class EventData
     {
@@ -119,6 +135,7 @@ namespace VirtueCore.Events
         public List<Tracks> tracks;
         public List<Jets> jets;
         public List<Blocks> blocks;
+        public List<Hexahedrons> hexahedrons;
     }
 
     [System.Serializable]

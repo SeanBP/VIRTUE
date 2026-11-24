@@ -451,7 +451,7 @@ public class EventLoader : MonoBehaviour
             source.Close();
 
             // Parse JSON file to EventDataWrapper class
-            eventDataWrapper = JsonUtility.FromJson<EventDataWrapper>(fileContents);
+            eventDataWrapper = EventFile.FromJson(fileContents);
 
             // Store header data into public variables
 
@@ -513,7 +513,7 @@ public class EventLoader : MonoBehaviour
 
                 if (eventOk)
                 {
-                    try { (blockObjects[i], blockTime[i]) = EventGeometry.CreateBlockObjects(eventDataWrapper.events[i].blocks, totScale, EventGeometry.MakeMaterial); }
+                    try { (blockObjects[i], blockTime[i]) = EventGeometry.CreateBlockObjects(eventDataWrapper.events[i], totScale, EventGeometry.MakeMaterial); }
                     catch (Exception ex) { eventOk = false; ReportEventLoadError(ex, i); }
                 }
                 yield return null;

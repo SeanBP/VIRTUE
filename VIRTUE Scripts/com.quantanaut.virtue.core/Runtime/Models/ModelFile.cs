@@ -31,31 +31,11 @@ namespace VirtueCore.Models
                 if (components[i] is Dictionary<string, object> component &&
                     component.TryGetValue("vertices", out object verticesValue))
                 {
-                    wrapper.components[i].vertices = ReadPoints(verticesValue);
+                    wrapper.components[i].vertices = MiniJson.ReadPoints(verticesValue);
                 }
             }
 
             return wrapper;
-        }
-
-        // [[x, y, z], ...] -> float[][]; anything that isn't a list of
-        // numeric lists becomes null so the geometry code can report it.
-        private static float[][] ReadPoints(object value)
-        {
-            if (!(value is List<object> list)) return null;
-
-            var points = new float[list.Count][];
-            for (int i = 0; i < list.Count; i++)
-            {
-                if (!(list[i] is List<object> point)) return null;
-                points[i] = new float[point.Count];
-                for (int j = 0; j < point.Count; j++)
-                {
-                    if (!(point[j] is double number)) return null;
-                    points[i][j] = (float)number;
-                }
-            }
-            return points;
         }
     }
 }

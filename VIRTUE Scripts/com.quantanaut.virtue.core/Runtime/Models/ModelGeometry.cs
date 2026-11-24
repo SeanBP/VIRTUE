@@ -177,27 +177,23 @@ namespace VirtueCore.Models
             return null;
         }
 
-        // A general 8-cornered solid. `vertices` are in the component's local
-        // frame: corners 0-3 are the front face, 4-7 the back face in the
-        // same winding (corner i joins corner i + 4). position and
-        // eulerAngle then place that local shape exactly as they place a
-        // block, so the same vertex list can be reused at several positions
-        // and orientations. Faces don't have to be planar or parallel -- each
-        // quad is split into two triangles along its 0-2 diagonal.
-        public static PieceResult MakeHexahedron(string name, float[][] localVertices, float[] position, float[] eulerAngle, float[] rgba, int renderQueue, float scale, float lineThickness, bool collidersOn)
+        // A hexahedron's 8 local corners in Unity space: x mirrored and
+        // everything scaled, the same file -> Unity convention as every
+        // other position. Also used for event-file hexahedrons.
+        public static Vector3[] HexahedronCorners(float[][] localVertices, float scale)
         {
-            GameObject hexahedron = new GameObject("Detector Piece", typeof(MeshFilter), typeof(MeshRenderer));
-            hexahedron.tag = "Detector";
-
-            // Same file -> Unity axis convention as every other component
-            // position: x is mirrored, everything is scaled by the model's
-            // length unit/scale.
             Vector3[] vertices = new Vector3[HexahedronCornerCount];
             for (int i = 0; i < HexahedronCornerCount; i++)
             {
                 vertices[i] = new Vector3(-scale * localVertices[i][0], scale * localVertices[i][1], scale * localVertices[i][2]);
             }
+            return vertices;
+        }
 
+        // The solid mesh for 8 corners (front face 0-3, back face 4-7). Also
+        // used for event-file hexahedrons.
+        public static Mesh BuildHexahedronMesh(Vector3[] vertices)
+        {
             // The six quads, each as corner indices in order around the face.
             int[,] faces = new int[6, 4]
             {
@@ -225,7 +221,26 @@ namespace VirtueCore.Models
             Mesh mesh = new Mesh();
             mesh.vertices = vertices;
             mesh.triangles = triangles;
-            hexahedron.GetComponent<MeshFilter>().mesh = mesh;
+            return mesh;
+        }
+
+        // A general 8-cornered solid. `vertices` are in the component's local
+        // frame: corners 0-3 are the front face, 4-7 the back face in the
+        // same winding (corner i joins corner i + 4). position and
+        // eulerAngle then place that local shape exactly as they place a
+        // block, so the same vertex list can be reused at several positions
+        // and orientations. Faces don't have to be planar or parallel -- each
+        // quad is split into two triangles along its 0-2 diagonal.
+        public static PieceResult MakeHexahedron(string name, float[][] localVertices, float[] position, float[] eulerAngle, float[] rgba, int renderQueue, float scale, float lineThickness, bool collidersOn)
+        {
+            GameObject hexahedron = new GameObject("Detector Piece", typeof(MeshFilter), typeof(MeshRenderer));
+            hexahedron.tag = "Detector";
+
+            // Same file -> Unity axis convention as every other component
+            // position: x is mirrored, everything is scaled by the model's
+            // length unit/scale.
+            Vector3[] vertices = HexahedronCorners(localVertices, scale);
+            hexahedron.GetComponent<MeshFilter>().mesh = BuildHexahedronMesh(vertices);
 
             MeshCollider meshCollider = hexahedron.AddComponent<MeshCollider>();
             meshCollider.enabled = collidersOn;

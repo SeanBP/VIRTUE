@@ -183,6 +183,86 @@ namespace VirtueCore.Events
             return (eventBlockObjects, blockTimeData);
         }
 
+        // An event's blocks followed by its hexahedrons. Both are solid
+        // shapes shown at their time_ns, so hexahedrons share the block
+        // arrays (and so all of their timing, show/hide and clearing).
+        public static (GameObject[], float[]) CreateBlockObjects(EventData evt, float totScale, Func<float[], Material> makeMaterial)
+        {
+            (GameObject[] blocks, float[] blockTimes) = CreateBlockObjects(evt?.blocks, totScale, makeMaterial);
+            if (evt?.hexahedrons == null || evt.hexahedrons.Count == 0)
+                return (blocks, blockTimes);
+
+            GameObject[] hexes;
+            float[] hexTimes;
+            try
+            {
+                (hexes, hexTimes) = CreateHexahedronObjects(evt.hexahedrons, totScale, makeMaterial);
+            }
+            catch
+            {
+                // The caller gets nothing back to destroy.
+                foreach (GameObject block in blocks)
+                    UnityEngine.Object.Destroy(block);
+                throw;
+            }
+
+            GameObject[] objects = new GameObject[blocks.Length + hexes.Length];
+            float[] times = new float[objects.Length];
+            Array.Copy(blocks, objects, blocks.Length);
+            Array.Copy(hexes, 0, objects, blocks.Length, hexes.Length);
+            Array.Copy(blockTimes, times, blockTimes.Length);
+            Array.Copy(hexTimes, 0, times, blockTimes.Length, hexTimes.Length);
+            return (objects, times);
+        }
+
+        // Hexahedrons: 8 local corners placed by position/euler_angles_deg,
+        // exactly as a model file's "hexahedron" component (and an event
+        // block) is placed. A hexahedron without 8 valid corners stops the
+        // event from loading with a message saying which one is wrong.
+        public static (GameObject[], float[]) CreateHexahedronObjects(List<Hexahedrons> hexahedrons, float totScale, Func<float[], Material> makeMaterial)
+        {
+            hexahedrons ??= new List<Hexahedrons>();
+
+            int count = hexahedrons.Count;
+            GameObject[] objects = new GameObject[count];
+            float[] times = new float[count];
+
+            for (int j = 0; j < count; j++)
+            {
+                Hexahedrons data = hexahedrons[j];
+
+                string problem = VirtueCore.Models.ModelGeometry.ValidateHexahedronVertices(data.vertices);
+                if (problem != null)
+                {
+                    // Clean up the ones already made, since the caller gets
+                    // nothing back to destroy.
+                    for (int k = 0; k < j; k++)
+                        UnityEngine.Object.Destroy(objects[k]);
+                    throw new FormatException("hexahedron " + j + " " + problem);
+                }
+
+                times[j] = data.time_ns;
+
+                GameObject hexahedron = new GameObject("Event Hexahedron", typeof(MeshFilter), typeof(MeshRenderer));
+                Vector3[] corners = VirtueCore.Models.ModelGeometry.HexahedronCorners(data.vertices, totScale);
+                hexahedron.GetComponent<MeshFilter>().mesh = VirtueCore.Models.ModelGeometry.BuildHexahedronMesh(corners);
+
+                hexahedron.transform.eulerAngles = new Vector3(data.euler_angles_deg[0], -data.euler_angles_deg[1], data.euler_angles_deg[2]);
+                hexahedron.transform.position = new Vector3(-data.position[0] * totScale, data.position[1] * totScale, data.position[2] * totScale);
+
+                MeshRenderer renderer = hexahedron.GetComponent<MeshRenderer>();
+                renderer.enabled = false;
+
+                Material material = makeMaterial(data.color_rgba);
+                material.renderQueue = RenderOrder.EventQueue;
+                renderer.sharedMaterial = material;
+
+                objects[j] = hexahedron;
+            }
+
+            return (objects, times);
+        }
+
         public static (GameObject[], float[]) CreateClusterObjects(List<Clusters> clusters, float totScale, Func<float[], Material> makeMaterial)
         {
             clusters ??= new List<Clusters>();
