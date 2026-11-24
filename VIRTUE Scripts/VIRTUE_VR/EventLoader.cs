@@ -195,6 +195,19 @@ public class EventLoader : MonoBehaviour
     }
 
 
+    // Called when a tour starts: an event file still loading is dropped
+    // straight away instead of finishing building objects the tour is about
+    // to replace (which used to lag the tour start, while the tour waited
+    // for it).
+    public void CancelLoadForTour()
+    {
+        if (!loadingEvent)
+            return;
+
+        CancelAndClearCurrentLoad();
+        ShowEmptyEvent();
+    }
+
     public void LoadTourFile(string newFilename)
     {
         StartCoroutine(LoadTourFileCoroutine(newFilename));
@@ -316,6 +329,9 @@ public class EventLoader : MonoBehaviour
                 Destroy(obj);
         }
         particles.Clear();
+
+        // The destroyed objects' materials and meshes aren't freed with them.
+        AssetCleanup.UnloadUnusedSoon(this);
     }
 
     // chaseCompanion controls whether a successfully-loaded event's own
@@ -461,6 +477,12 @@ public class EventLoader : MonoBehaviour
         {
             errorText.text = "Error reading event file: " + ex.Message;
             UnityEngine.Debug.LogError("Error reading event file: " + ex.Message);
+            // Finish the load as "nothing loaded" -- leaving loadingEvent set
+            // here used to leave anything waiting for the load (starting or
+            // leaving a tour, the next file) waiting forever.
+            loadingEvent = false;
+            activeLoadCoroutine = null;
+            ShowEmptyEvent();
             yield break;
         }
 

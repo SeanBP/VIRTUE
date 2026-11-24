@@ -177,6 +177,10 @@ public class TourMaker : MonoBehaviour
             cameraController?.CaptureTourReturnState();
         }
 
+        // An event file still loading is dropped now rather than waited for
+        // (the return state above already recorded it, so ExitTour reloads it).
+        eventLoader.CancelLoadForTour();
+
         TourActive = true;
         currentTour = tour;
 

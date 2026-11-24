@@ -538,6 +538,9 @@ public class ComponentMaker : MonoBehaviour
         }
         nameTagObjects = new List<GameObject>();
         tagsActive = false;
+
+        // The destroyed parts' materials and meshes aren't freed with them.
+        AssetCleanup.UnloadUnusedSoon(this);
     }
 
     public void buildSimModel(bool chaseCompanion = true)
@@ -702,9 +705,15 @@ public class ComponentMaker : MonoBehaviour
 
     void Update()
     {
+        // Name tags face the camera -- only worth doing while they're shown
+        // (a large model has thousands of them).
+        if (!tagsActive || Camera.main == null)
+            return;
+
+        Quaternion cameraRotation = Camera.main.transform.rotation;
         for (int i = 0; i < pivots.Count; i++)
         {
-            pivots[i].transform.rotation = Camera.main.transform.rotation;
+            pivots[i].transform.rotation = cameraRotation;
 
         }
     }

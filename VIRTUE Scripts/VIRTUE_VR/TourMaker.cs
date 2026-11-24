@@ -117,6 +117,9 @@ public class TourMaker : MonoBehaviour
 
         currentTour = tour;
 
+        // An event file still loading is dropped now rather than waited for.
+        eventLoader.CancelLoadForTour();
+
         if (activeTourLoadCoroutine != null)
         {
             StopCoroutine(activeTourLoadCoroutine);

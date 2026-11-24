@@ -6,18 +6,21 @@ using UnityEngine;
 namespace VirtueCore.Models
 {
     // Fades a model's components (and their outline lines) to new alphas for
-    // a tour scene, without stalling frames -- which, with thousands of
-    // parts, made the tour camera stutter while it was moving.
+    // a tour scene.
     //
-    //  * Each part's material and lines are looked up once per model (the
-    //    Cache), not every frame.
-    //  * Only parts whose alpha actually changes are animated.
-    //  * Work is capped per frame (frameBudgetMs, always at least
-    //    MinPartsPerFrame parts), staggering the rest over the following
-    //    frames -- the same idea as clearing event objects 1,000 at a time.
-    //    When more parts change than fit in a frame, each one is updated
-    //    every few frames instead of every frame; the fade still finishes
-    //    in about `duration` and every part ends exactly on its target.
+    // What keeps tour camera moves smooth:
+    //  * Fully transparent parts and lines have their renderers switched OFF.
+    //    Unity still draws a material at alpha 0, so a tour model with most
+    //    parts hidden used to draw every one of them (and up to 12 outline
+    //    lines each) every frame -- a cost that depended on what was in view,
+    //    which is why some transitions stuttered and others didn't. They're
+    //    switched back on when they fade in.
+    //  * Each part's renderer, material and lines are looked up once per
+    //    model (the Cache), not every frame.
+    //  * Only parts (and lines) whose alpha actually changes are animated;
+    //    those are updated every frame, so fades stay smooth.
+    //  * The one-off passes over every part (building the cache, reading the
+    //    starting alphas) are spread over frames within a small time budget.
     public static class ComponentFade
     {
         public const float DefaultFrameBudgetMs = 1.5f;
@@ -29,6 +32,7 @@ namespace VirtueCore.Models
         {
             internal List<GameObject> source;
             internal int sourceCount;
+            internal Renderer[] renderers;
             internal Material[] materials;
             internal LineRenderer[][] lines;
 
@@ -48,6 +52,7 @@ namespace VirtueCore.Models
             {
                 source = parts,
                 sourceCount = count,
+                renderers = new Renderer[count],
                 materials = new Material[count],
                 lines = new LineRenderer[count][]
             };
@@ -60,11 +65,12 @@ namespace VirtueCore.Models
                 if (part != null)
                 {
                     Renderer renderer = part.GetComponent<Renderer>();
+                    cache.renderers[i] = renderer;
                     // .material: the renderer's own instance (made once), so
                     // changing alpha never touches a material shared with
                     // other parts.
                     cache.materials[i] = renderer != null ? renderer.material : null;
-                    cache.lines[i] = part.GetComponentsInChildren<LineRenderer>();
+                    cache.lines[i] = part.GetComponentsInChildren<LineRenderer>(true);
                 }
                 else
                 {
@@ -92,7 +98,8 @@ namespace VirtueCore.Models
             Stopwatch watch = Stopwatch.StartNew();
             int done = 0;
 
-            // 1. Starting alphas, and which parts actually change.
+            // 1. Starting alphas and which parts change. Parts already at an
+            //    alpha of 0 that stay there are switched off on the way.
             List<int> changing = new List<int>();
             float[] meshStart = new float[count];
             float[][] lineStart = new float[count][];
@@ -105,16 +112,23 @@ namespace VirtueCore.Models
                 if (material != null)
                 {
                     meshStart[i] = material.color.a;
-                    changes |= !Mathf.Approximately(meshStart[i], meshTargets[i]);
+                    if (!Mathf.Approximately(meshStart[i], meshTargets[i]))
+                        changes = true;
+                    else if (meshTargets[i] <= 0f)
+                        SetEnabled(cache.renderers[i], false);
                 }
 
                 LineRenderer[] partLines = cache.lines[i];
                 float[] starts = new float[partLines.Length];
                 for (int j = 0; j < partLines.Length; j++)
                 {
-                    if (partLines[j] == null) continue;
-                    starts[j] = partLines[j].startColor.a;
-                    changes |= !Mathf.Approximately(starts[j], lineTargets[i]);
+                    LineRenderer line = partLines[j];
+                    if (line == null) continue;
+                    starts[j] = line.startColor.a;
+                    if (!Mathf.Approximately(starts[j], lineTargets[i]))
+                        changes = true;
+                    else if (lineTargets[i] <= 0f)
+                        SetEnabled(line, false);
                 }
                 lineStart[i] = starts;
 
@@ -132,42 +146,43 @@ namespace VirtueCore.Models
             if (changeCount == 0)
                 yield break;
 
-            // 2. Animate, round-robin within the frame budget.
+            // 2. Anything fading in has to be drawn from the start.
+            foreach (int i in changing)
+            {
+                if (meshTargets[i] > 0f && cache.materials[i] != null)
+                    SetEnabled(cache.renderers[i], true);
+
+                if (lineTargets[i] > 0f)
+                {
+                    foreach (LineRenderer line in cache.lines[i])
+                        SetEnabled(line, true);
+                }
+            }
+
+            // 3. Animate every changing part every frame.
             float fadeStart = Time.time;
-            int cursor = 0;
             while (true)
             {
                 float s = duration > 0f ? Mathf.Clamp01((Time.time - fadeStart) / duration) : 1f;
+
+                foreach (int i in changing)
+                    Apply(cache, i, meshStart[i], meshTargets[i], lineStart[i], lineTargets[i], s);
+
                 if (s >= 1f)
                     break;
-
-                watch.Restart();
-                for (int processed = 0; processed < changeCount; processed++)
-                {
-                    int i = changing[cursor];
-                    Apply(cache, i, meshStart[i], meshTargets[i], lineStart[i], lineTargets[i], s);
-                    cursor = (cursor + 1) % changeCount;
-
-                    if (processed + 1 >= MinPartsPerFrame && watch.Elapsed.TotalMilliseconds > frameBudgetMs)
-                        break;
-                }
-
                 yield return null;
             }
 
-            // 3. Land every changing part exactly on its target.
-            watch.Restart();
-            done = 0;
-            for (int k = 0; k < changeCount; k++)
+            // 4. Faded all the way out: stop drawing them.
+            foreach (int i in changing)
             {
-                int i = changing[k];
-                Apply(cache, i, meshStart[i], meshTargets[i], lineStart[i], lineTargets[i], 1f);
+                if (meshTargets[i] <= 0f)
+                    SetEnabled(cache.renderers[i], false);
 
-                if (++done >= MinPartsPerFrame && watch.Elapsed.TotalMilliseconds > frameBudgetMs)
+                if (lineTargets[i] <= 0f)
                 {
-                    yield return null;
-                    watch.Restart();
-                    done = 0;
+                    foreach (LineRenderer line in cache.lines[i])
+                        SetEnabled(line, false);
                 }
             }
         }
@@ -176,7 +191,7 @@ namespace VirtueCore.Models
                                   float[] lineStarts, float lineTarget, float s)
         {
             Material material = cache.materials[i];
-            if (material != null)
+            if (material != null && !Mathf.Approximately(meshStart, meshTarget))
             {
                 Color c = material.color;
                 c.a = Mathf.Lerp(meshStart, meshTarget, s);
@@ -187,7 +202,7 @@ namespace VirtueCore.Models
             for (int j = 0; j < partLines.Length; j++)
             {
                 LineRenderer line = partLines[j];
-                if (line == null) continue;
+                if (line == null || Mathf.Approximately(lineStarts[j], lineTarget)) continue;
 
                 float a = Mathf.Lerp(lineStarts[j], lineTarget, s);
                 Color sc = line.startColor;
@@ -197,6 +212,12 @@ namespace VirtueCore.Models
                 line.startColor = sc;
                 line.endColor = ec;
             }
+        }
+
+        private static void SetEnabled(Renderer renderer, bool enabled)
+        {
+            if (renderer != null && renderer.enabled != enabled)
+                renderer.enabled = enabled;
         }
     }
 }
